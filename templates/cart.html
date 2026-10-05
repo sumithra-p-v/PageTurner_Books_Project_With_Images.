@@ -1,75 +1,75 @@
-{% extends "base.html" %}
-
-{% block title %}Cart - PageTurner Books{% endblock %}
+{% extends 'base.html' %}
 
 {% block content %}
-<section class="container">
-    <h1>Your Cart</h1>
+<div class="container my-5">
+    <h2 class="fw-bold mb-4"><i class="fa-solid fa-cart-shopping me-2 text-warning"></i>Your Shopping Cart</h2>
 
     {% if items %}
-        <div class="cart-table-wrapper">
-            <table class="cart-table">
-                <thead>
-                    <tr>
-                        <th>Book</th>
-                        <th>Price</th>
-                        <th>Quantity</th>
-                        <th>Subtotal</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
+    <div class="row g-4">
+        <!-- Cart Items List -->
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm rounded-3 p-3 bg-white">
+                {% for item in items %}
+                <div class="d-flex align-items-center justify-content-between border-bottom py-3">
+                    <div class="d-flex align-items-center gap-3">
+                        <img src="{{ item.book.image_url }}" alt="{{ item.book.title }}" style="width: 70px; height: 95px; object-fit: contain;" class="rounded border">
+                        <div>
+                            <h6 class="fw-bold mb-1">{{ item.book.title }}</h6>
+                            <p class="text-muted small mb-1">by {{ item.book.author }}</p>
+                            <span class="text-primary fw-bold">₹{{ "%.2f"|format(item.book.price) }}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="d-flex align-items-center gap-3">
+                        <form action="{{ url_for('update_cart', book_id=item.book.id) }}" method="POST" class="d-flex align-items-center gap-1">
+                            <input type="number" name="quantity" value="{{ item.quantity }}" min="1" max="{{ item.book.stock }}" class="form-control form-control-sm text-center" style="width: 60px;">
+                            <button type="submit" class="btn btn-sm btn-outline-secondary" title="Update Quantity">
+                                <i class="fa-solid fa-rotate"></i>
+                            </button>
+                        </form>
 
-                <tbody>
-                    {% for item in items %}
-                    <tr>
-                        <td>
-                            <strong>{{ item['book']['title'] }}</strong><br>
-                            <small>{{ item['book']['author'] }}</small>
-                        </td>
-
-                        <td>₹{{ "%.2f"|format(item['book']['price']) }}</td>
-
-                        <td>
-                            <form class="quantity-form"
-                                  method="POST"
-                                  action="{{ url_for('update_cart', book_id=item['book']['id']) }}">
-                                <input
-                                    type="number"
-                                    name="quantity"
-                                    min="0"
-                                    max="{{ item['book']['stock'] }}"
-                                    value="{{ item['quantity'] }}"
-                                >
-                                <button class="small-button" type="submit">Update</button>
+                        <div class="text-end" style="min-width: 80px;">
+                            <h6 class="fw-bold text-dark mb-1">₹{{ "%.2f"|format(item.item_total) }}</h6>
+                            <form action="{{ url_for('remove_from_cart', book_id=item.book.id) }}" method="POST">
+                                <button type="submit" class="btn btn-sm text-danger border-0 p-0">
+                                    <i class="fa-solid fa-trash"></i> Remove
+                                </button>
                             </form>
-                        </td>
-
-                        <td>₹{{ "%.2f"|format(item['item_total']) }}</td>
-
-                        <td>
-                            <form method="POST"
-                                  action="{{ url_for('remove_from_cart', book_id=item['book']['id']) }}"
-                                  onsubmit="return confirmRemove();">
-                                <button class="remove-button" type="submit">Remove</button>
-                            </form>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+                <div class="d-flex justify-content-between align-items-center mt-3 pt-2">
+                    <a href="{{ url_for('home') }}" class="btn btn-outline-dark btn-sm fw-bold">&larr; Continue Shopping</a>
+                </div>
+            </div>
         </div>
 
-        <div class="cart-summary">
-            <h2>Total: ₹{{ "%.2f"|format(total) }}</h2>
-            <a href="{{ url_for('checkout') }}" class="button">Proceed to Checkout</a>
+        <!-- Order Summary Box -->
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm rounded-3 p-4 bg-white">
+                <h5 class="fw-bold mb-3 border-bottom pb-2">Order Summary</h5>
+                <div class="d-flex justify-content-between mb-2">
+                    <span class="text-muted">Total Items:</span>
+                    <span class="fw-bold">{{ cart_count }}</span>
+                </div>
+                <div class="d-flex justify-content-between mb-3 fs-5">
+                    <span class="fw-bold">Total Amount:</span>
+                    <span class="fw-bold text-primary">₹{{ "%.2f"|format(total) }}</span>
+                </div>
+                <a href="{{ url_for('checkout') }}" class="btn btn-success btn-lg w-100 fw-bold shadow-sm mt-2">
+                    Proceed to Buy <i class="fa-solid fa-arrow-right ms-2"></i>
+                </a>
+            </div>
         </div>
-
+    </div>
     {% else %}
-        <div class="empty-cart">
-            <h2>Your cart is empty.</h2>
-            <p>Add some books to get started.</p>
-            <a href="{{ url_for('home') }}" class="button">Browse Books</a>
-        </div>
+    <div class="text-center py-5 bg-white rounded shadow-sm border">
+        <i class="fa-solid fa-cart-arrow-down text-muted mb-3" style="font-size: 4rem;"></i>
+        <h4>Your cart is empty!</h4>
+        <p class="text-muted">Explore our collection and add books to your cart.</p>
+        <a href="{{ url_for('home') }}" class="btn btn-warning fw-bold px-4">Browse Books</a>
+    </div>
     {% endif %}
-</section>
+</div>
 {% endblock %}

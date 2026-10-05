@@ -1,76 +1,59 @@
-{% extends "base.html" %}
-
-{% block title %}Home - PageTurner Books{% endblock %}
+{% extends 'base.html' %}
 
 {% block content %}
+<div class="container my-5">
 
-<section class="hero">
-    <div>
-        <p class="hero-small">WELCOME TO</p>
-        <h1>PageTurner Books</h1>
-        <p>Discover your next favorite book.</p>
-        <a href="#books" class="button">Browse Books</a>
-    </div>
-</section>
-
-<section class="container" id="books">
-    <h2>Find Your Book</h2>
-
-    <input
-        type="text"
-        id="searchBox"
-        class="search-box"
-        placeholder="Search by title or author..."
-    >
-
-    <div class="categories">
-        <a class="category-button {% if not selected_category %}active{% endif %}"
-           href="{{ url_for('home') }}">All</a>
-
-        {% for category in categories %}
-            <a class="category-button {% if selected_category == category['category'] %}active{% endif %}"
-               href="{{ url_for('home', category=category['category']) }}">
-                {{ category['category'] }}
-            </a>
-        {% endfor %}
+    <!-- Search and Filter Bar -->
+    <div class="card border-0 shadow-sm p-4 mb-5 bg-white rounded-3">
+        <h4 class="fw-bold mb-3">Find Your Book</h4>
+        <form action="{{ url_for('home') }}" method="GET" class="row g-3">
+            <div class="col-md-6">
+                <input type="text" name="search" class="form-control" placeholder="Search by title, author or category..." value="{{ request.args.get('search', '') }}">
+            </div>
+            <div class="col-md-4">
+                <select name="category" class="form-select">
+                    <option value="">All Categories</option>
+                    {% for cat in categories %}
+                        <option value="{{ cat }}" {% if request.args.get('category') == cat %}selected{% endif %}>{{ cat }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary w-100 fw-bold">Search</button>
+            </div>
+        </form>
     </div>
 
-    <div class="book-grid" id="bookGrid">
+    <!-- Books Horizontal Grid Row -->
+    <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 g-4">
         {% for book in books %}
-            <article class="book-card"
-                     data-title="{{ book['title']|lower }}"
-                     data-author="{{ book['author']|lower }}">
-
-                <!-- Replaced colored div with real cover image -->
-                {% if book['image_url'] %}
-                    <img src="{{ book['image_url'] }}" alt="{{ book['title'] }}" class="book-cover-img">
-                {% else %}
-                    <div class="book-cover" style="background-color: {{ book['cover_color'] }};">
-                        <span>📖</span>
-                        <strong>{{ book['title'] }}</strong>
-                    </div>
-                {% endif %}
-
-                <div class="book-info">
-                    <h3>{{ book['title'] }}</h3>
-                    <p class="author">by {{ book['author'] }}</p>
-                    <p><span class="tag">{{ book['category'] }}</span></p>
-                    <p class="price">₹{{ "%.2f"|format(book['price']) }}</p>
-
-                    <a class="button secondary"
-                       href="{{ url_for('book', book_id=book['id']) }}">
-                        View Book
-                    </a>
+        <div class="col">
+            <div class="card h-100 border-0 shadow-sm rounded-3 overflow-hidden bg-white">
+                <!-- Book Image Container -->
+                <div class="bg-light text-center p-3 d-flex align-items-center justify-content-center" style="height: 240px;">
+                    <img src="{{ book.image_url }}" alt="{{ book.title }}" class="img-fluid mh-100" style="object-fit: contain; max-height: 200px;">
                 </div>
-            </article>
+
+                <!-- Book Details -->
+                <div class="card-body d-flex flex-column p-3">
+                    <span class="text-uppercase text-muted fw-bold mb-1" style="font-size: 0.75rem;">{{ book.category }}</span>
+                    <h6 class="card-title fw-bold text-truncate mb-1" title="{{ book.title }}">{{ book.title }}</h6>
+                    <p class="text-muted small mb-3">by {{ book.author }}</p>
+
+                    <div class="mt-auto d-flex align-items-center justify-content-between pt-2 border-top">
+                        <span class="fw-bold fs-6 text-primary">₹{{ "%.2f"|format(book.price) }}</span>
+                        <a href="{{ url_for('book_detail', book_id=book.id) }}" class="btn btn-outline-dark btn-sm fw-bold">View Book &rarr;</a>
+                    </div>
+                </div>
+            </div>
+        </div>
         {% else %}
-            <p>No books found.</p>
+        <div class="col-12 text-center py-5">
+            <h5>No books found matching your criteria.</h5>
+            <a href="{{ url_for('home') }}" class="btn btn-secondary btn-sm mt-2">Clear Search</a>
+        </div>
         {% endfor %}
     </div>
 
-    <p id="noSearchResults" class="empty-message hidden">
-        No books match your search.
-    </p>
-</section>
-
+</div>
 {% endblock %}

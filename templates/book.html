@@ -1,7 +1,46 @@
-{% if book['image_url'] %}
-    <img src="{{ book['image_url'] }}" alt="{{ book['title'] }}" class="detail-book-cover">
-{% else %}
-    <div class="book-cover" style="background-color: {{ book['cover_color'] }};">
-        <span>📖</span>
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container my-5">
+    <a href="{{ url_for('home') }}" class="btn btn-outline-secondary mb-4">&larr; Back to Books</a>
+    
+    <div class="row g-4 bg-white p-4 rounded shadow-sm border">
+        <!-- Cover Image -->
+        <div class="col-md-5 text-center">
+            <img src="{{ book.image_url }}" class="img-fluid rounded border shadow-sm" alt="{{ book.title }}" style="max-height: 380px; width: 100%; object-fit: contain;">
+        </div>
+        
+        <!-- Book Details & Actions -->
+        <div class="col-md-7 d-flex flex-column justify-content-between">
+            <div>
+                <span class="badge bg-secondary mb-2 fs-6">{{ book.category }}</span>
+                <h2 class="fw-bold display-6">{{ book.title }}</h2>
+                <p class="text-muted fs-5 mb-1">by <strong class="text-dark">{{ book.author }}</strong></p>
+                <h3 class="text-primary fw-bold my-3">₹{{ "%.2f"|format(book.price) }}</h3>
+                
+                <div class="mb-4">
+                    <strong>Availability:</strong> 
+                    {% if book.stock > 0 %}
+                        <span class="text-success fw-bold ms-1"><i class="fa-solid fa-check-circle me-1"></i>In Stock ({{ book.stock }} available)</span>
+                    {% else %}
+                        <span class="text-danger fw-bold ms-1"><i class="fa-solid fa-times-circle me-1"></i>Out of Stock</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div>
+                {% if book.stock > 0 %}
+                    <form action="{{ url_for('add_to_cart', book_id=book.id) }}" method="POST">
+                        <button type="submit" class="btn btn-warning btn-lg w-100 fw-bold text-dark shadow-sm">
+                            <i class="fa-solid fa-cart-plus me-2"></i>Add to Cart
+                        </button>
+                    </form>
+                {% else %}
+                    <button class="btn btn-secondary btn-lg w-100 fw-bold" disabled>Out of Stock</button>
+                {% endif %}
+            </div>
+        </div>
     </div>
-{% endif %}
+</div>
+{% endblock %}

@@ -1,50 +1,59 @@
-{% extends "base.html" %}
-
-{% block title %}Checkout - PageTurner Books{% endblock %}
+{% extends 'base.html' %}
 
 {% block content %}
-<section class="container narrow">
-    <h1>Checkout</h1>
+<div class="container my-5" style="max-width: 900px;">
+    <h2 class="fw-bold mb-4"><i class="fa-solid fa-truck-fast me-2 text-primary"></i>Delivery & Checkout Details</h2>
 
-    <div class="checkout-layout">
-        <form method="POST" class="form-card" id="checkoutForm">
+    <div class="row g-4">
+        <!-- Customer Details Form -->
+        <div class="col-md-7">
+            <div class="card border-0 shadow-sm rounded-3 p-4 bg-white">
+                <h5 class="fw-bold mb-3 border-bottom pb-2">Shipping Information</h5>
+                
+                <form action="{{ url_for('checkout') }}" method="POST">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Full Name</label>
+                        <input type="text" name="customer_name" class="form-control" placeholder="Enter full name" required>
+                    </div>
 
-            <label for="customer_name">Full Name</label>
-            <input type="text" id="customer_name" name="customer_name"
-                   value="{{ request.form.get('customer_name', '') }}"
-                   required>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Phone Number (10 Digits)</label>
+                        <input type="tel" name="phone" pattern="[0-9]{10}" maxlength="10" class="form-control" placeholder="e.g. 9876543210" required>
+                        <div class="form-text">Must be exactly 10 numeric digits.</div>
+                    </div>
 
-            <label for="phone">Phone Number</label>
-            <input type="tel" id="phone" name="phone"
-                   value="{{ request.form.get('phone', '') }}"
-                   maxlength="10"
-                   pattern="[0-9]{10}"
-                   placeholder="10 digit phone number"
-                   required>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Delivery Address</label>
+                        <textarea name="address" class="form-control" rows="3" placeholder="Enter complete shipping address" required></textarea>
+                    </div>
 
-            <label for="address">Delivery Address</label>
-            <textarea id="address" name="address" rows="5" required>{{ request.form.get('address', '') }}</textarea>
+                    <button type="submit" class="btn btn-success btn-lg w-100 fw-bold shadow-sm mt-3">
+                        <i class="fa-solid fa-circle-check me-2"></i>Place Order
+                    </button>
+                </form>
+            </div>
+        </div>
 
-            <button class="button" type="submit">Place Order</button>
-        </form>
-
-        <div class="order-summary">
-            <h2>Order Summary</h2>
-
-            {% for item in items %}
-                <div class="summary-row">
-                    <span>{{ item['book']['title'] }} × {{ item['quantity'] }}</span>
-                    <strong>₹{{ "%.2f"|format(item['item_total']) }}</strong>
+        <!-- Order Items Summary -->
+        <div class="col-md-5">
+            <div class="card border-0 shadow-sm rounded-3 p-4 bg-white">
+                <h5 class="fw-bold mb-3 border-bottom pb-2">Your Order</h5>
+                {% for item in items %}
+                <div class="d-flex justify-content-between align-items-center mb-2 small">
+                    <div>
+                        <strong class="d-block text-truncate" style="max-width: 180px;">{{ item.book.title }}</strong>
+                        <span class="text-muted">Qty: {{ item.quantity }}</span>
+                    </div>
+                    <span class="fw-bold">₹{{ "%.2f"|format(item.item_total) }}</span>
                 </div>
-            {% endfor %}
-
-            <hr>
-
-            <div class="summary-row total-row">
-                <span>Total</span>
-                <strong>₹{{ "%.2f"|format(total) }}</strong>
+                {% endfor %}
+                <hr>
+                <div class="d-flex justify-content-between fs-5 fw-bold">
+                    <span>Total:</span>
+                    <span class="text-primary">₹{{ "%.2f"|format(total) }}</span>
+                </div>
             </div>
         </div>
     </div>
-</section>
+</div>
 {% endblock %}

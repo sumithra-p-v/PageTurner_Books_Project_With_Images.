@@ -1,306 +1,220 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, session
 import sqlite3
-from datetime import datetime
 
 app = Flask(__name__)
-app.secret_key = "pageturner-secret-key"
+app.secret_key = 'pageturner_secret_key'
 
-DATABASE = "books.db"
-
+DATABASE = 'books.db'  # Change to 'database.db' if your filename is database.db
 
 def get_db():
-    # Open the SQLite database.
     conn = sqlite3.connect(DATABASE)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
-
-def get_cart_count():
-    # Add all quantities in the session cart.
-    cart = session.get("cart", {})
-    return sum(cart.values())
-
-
-def get_cart_books():
-    # Get the books currently stored in the cart.
-    cart = session.get("cart", {})
-    if not cart:
-        return [], 0
-
-    ids = [int(book_id) for book_id in cart.keys()]
-    placeholders = ",".join(["?"] * len(ids))
-
+def init_db():
     conn = get_db()
-    books = conn.execute(
-        f"SELECT * FROM books WHERE id IN ({placeholders})", ids
-    ).fetchall()
+    cursor = conn.cursor()
+    
+    # Create books table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS books (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            author TEXT NOT NULL,
+            category TEXT NOT NULL,
+            price REAL NOT NULL,
+            stock INTEGER NOT NULL,
+            image_url TEXT NOT NULL
+        )
+    ''')
+    
+    # Create orders table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_name TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            address TEXT NOT NULL,
+            total_amount REAL NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Create order_items table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS order_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL,
+            book_id INTEGER NOT NULL,
+            quantity INTEGER NOT NULL,
+            price REAL NOT NULL,
+            FOREIGN KEY (order_id) REFERENCES orders (id),
+            FOREIGN KEY (book_id) REFERENCES books (id)
+        )
+    ''')
+
+    conn.commit()
     conn.close()
 
-    items = []
-    total = 0
-
-    for book in books:
-        quantity = cart.get(str(book["id"]), 0)
-        item_total = book["price"] * quantity
-        total += item_total
-        items.append({
-            "book": book,
-            "quantity": quantity,
-            "item_total": item_total
-        })
-
-    return items, total
-
+# Automatically initialize missing database tables on launch
+init_db()
 
 @app.context_processor
-def common_data():
-    return {"cart_count": get_cart_count()}
+def inject_cart_count():
+    cart = session.get('cart', {})
+    total_count = sum(cart.values())
+    return dict(cart_count=total_count)
 
-
-@app.route("/")
+@app.route('/')
 def home():
-    category = request.args.get("category", "")
-
     conn = get_db()
+    search = request.args.get('search', '').strip()
+    category = request.args.get('category', '').strip()
+    
+    query = "SELECT * FROM books WHERE 1=1"
+    params = []
+
+    if search:
+        query += " AND (title LIKE ? OR author LIKE ? OR category LIKE ?)"
+        params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
 
     if category:
-        books = conn.execute(
-            "SELECT * FROM books WHERE category = ? ORDER BY title",
-            (category,)
-        ).fetchall()
-    else:
-        books = conn.execute(
-            "SELECT * FROM books ORDER BY id"
-        ).fetchall()
+        query += " AND category = ?"
+        params.append(category)
 
-    categories = conn.execute(
-        "SELECT DISTINCT category FROM books ORDER BY category"
-    ).fetchall()
-
+    books = conn.execute(query, params).fetchall()
+    categories = [row['category'] for row in conn.execute("SELECT DISTINCT category FROM books").fetchall()]
     conn.close()
+    
+    return render_template('home.html', books=books, categories=categories)
 
-    return render_template(
-        "home.html",
-        books=books,
-        categories=categories,
-        selected_category=category
-    )
-
-
-@app.route("/book/<int:book_id>")
-def book(book_id):
+@app.route('/book/<int:book_id>')
+def book_detail(book_id):
     conn = get_db()
-    book_data = conn.execute(
-        "SELECT * FROM books WHERE id = ?",
-        (book_id,)
-    ).fetchone()
+    book = conn.execute("SELECT * FROM books WHERE id = ?", (book_id,)).fetchone()
     conn.close()
+    if not book:
+        flash("Book not found!", "error")
+        return redirect(url_for('home'))
+    return render_template('book.html', book=book)
 
-    if book_data is None:
-        flash("Book not found.", "error")
-        return redirect(url_for("home"))
-
-    return render_template("book.html", book=book_data)
-
-
-@app.route("/cart/add/<int:book_id>", methods=["POST"])
+@app.route('/add_to_cart/<int:book_id>', methods=['POST'])
 def add_to_cart(book_id):
-    conn = get_db()
-    book_data = conn.execute(
-        "SELECT * FROM books WHERE id = ?",
-        (book_id,)
-    ).fetchone()
-    conn.close()
+    cart = session.get('cart', {})
+    str_id = str(book_id)
+    cart[str_id] = cart.get(str_id, 0) + 1
+    session['cart'] = cart
+    flash("Book added to cart successfully!", "success")
+    return redirect(url_for('cart'))
 
-    if book_data is None:
-        flash("Book not found.", "error")
-        return redirect(url_for("home"))
-
-    if book_data["stock"] <= 0:
-        flash("This book is out of stock.", "error")
-        return redirect(url_for("book", book_id=book_id))
-
-    cart = session.get("cart", {})
-    key = str(book_id)
-    current_quantity = cart.get(key, 0)
-
-    if current_quantity >= book_data["stock"]:
-        flash("You cannot add more than the available stock.", "error")
-    else:
-        cart[key] = current_quantity + 1
-        session["cart"] = cart
-        flash("Book added to cart!", "success")
-
-    return redirect(request.referrer or url_for("home"))
-
-
-@app.route("/cart")
+@app.route('/cart')
 def cart():
-    items, total = get_cart_books()
-    return render_template("cart.html", items=items, total=total)
+    cart = session.get('cart', {})
+    items = []
+    total = 0.0
+    conn = get_db()
 
+    for book_id, qty in cart.items():
+        book = conn.execute("SELECT * FROM books WHERE id = ?", (int(book_id),)).fetchone()
+        if book:
+            item_total = book['price'] * qty
+            total += item_total
+            items.append({'book': book, 'quantity': qty, 'item_total': item_total})
 
-@app.route("/cart/update/<int:book_id>", methods=["POST"])
+    conn.close()
+    return render_template('cart.html', items=items, total=total)
+
+@app.route('/update_cart/<int:book_id>', methods=['POST'])
 def update_cart(book_id):
-    try:
-        quantity = int(request.form.get("quantity", 1))
-    except ValueError:
-        quantity = 1
+    cart = session.get('cart', {})
+    str_id = str(book_id)
+    new_qty = int(request.form.get('quantity', 1))
+
+    if new_qty > 0:
+        cart[str_id] = new_qty
+    else:
+        cart.pop(str_id, None)
+
+    session['cart'] = cart
+    return redirect(url_for('cart'))
+
+@app.route('/remove_from_cart/<int:book_id>', methods=['POST'])
+def remove_from_cart(book_id):
+    cart = session.get('cart', {})
+    cart.pop(str(book_id), None)
+    session['cart'] = cart
+    flash("Item removed from cart.", "info")
+    return redirect(url_for('cart'))
+
+@app.route('/checkout', methods=['GET', 'POST'])
+def checkout():
+    cart = session.get('cart', {})
+    if not cart:
+        flash("Your cart is empty!", "error")
+        return redirect(url_for('home'))
 
     conn = get_db()
-    book_data = conn.execute(
-        "SELECT * FROM books WHERE id = ?",
-        (book_id,)
-    ).fetchone()
-    conn.close()
 
-    cart = session.get("cart", {})
-    key = str(book_id)
+    if request.method == 'POST':
+        name = request.form.get('customer_name')
+        phone = request.form.get('phone')
+        address = request.form.get('address')
 
-    if book_data is None:
-        cart.pop(key, None)
-    elif quantity <= 0:
-        cart.pop(key, None)
-    elif quantity > book_data["stock"]:
-        cart[key] = book_data["stock"]
-        flash("Quantity changed to available stock.", "error")
-    else:
-        cart[key] = quantity
+        total = 0.0
+        order_items_data = []
 
-    session["cart"] = cart
-    return redirect(url_for("cart"))
+        for book_id, qty in cart.items():
+            book = conn.execute("SELECT * FROM books WHERE id = ?", (int(book_id),)).fetchone()
+            if book:
+                item_total = book['price'] * qty
+                total += item_total
+                order_items_data.append((int(book_id), qty, book['price']))
 
-
-@app.route("/cart/remove/<int:book_id>", methods=["POST"])
-def remove_from_cart(book_id):
-    cart = session.get("cart", {})
-    cart.pop(str(book_id), None)
-    session["cart"] = cart
-    flash("Book removed from cart.", "success")
-    return redirect(url_for("cart"))
-
-
-@app.route("/checkout", methods=["GET", "POST"])
-def checkout():
-    items, total = get_cart_books()
-
-    if not items:
-        flash("Your cart is empty.", "error")
-        return redirect(url_for("home"))
-
-    if request.method == "POST":
-        name = request.form.get("customer_name", "").strip()
-        phone = request.form.get("phone", "").strip()
-        address = request.form.get("address", "").strip()
-
-        if not name or not phone or not address:
-            flash("Please fill in all fields.", "error")
-            return render_template("checkout.html", items=items, total=total)
-
-        if len(phone) != 10 or not phone.isdigit():
-            flash("Phone number must contain exactly 10 digits.", "error")
-            return render_template("checkout.html", items=items, total=total)
-
-        # Check stock again before saving the order.
-        conn = get_db()
-        for item in items:
-            current_book = conn.execute(
-                "SELECT stock FROM books WHERE id = ?",
-                (item["book"]["id"],)
-            ).fetchone()
-
-            if current_book is None or current_book["stock"] < item["quantity"]:
-                conn.close()
-                flash(f"Not enough stock for {item['book']['title']}.", "error")
-                return redirect(url_for("cart"))
-
-        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # Save the main order first.
-        cursor = conn.execute(
-            """INSERT INTO orders
-               (customer_name, phone, address, total, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (name, phone, address, total, created_at)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO orders (customer_name, phone, address, total_amount) VALUES (?, ?, ?, ?)",
+            (name, phone, address, total)
         )
-
         order_id = cursor.lastrowid
 
-        # Save every book belonging to the order.
-        for item in items:
-            conn.execute(
-                """INSERT INTO order_items
-                   (order_id, book_id, quantity, price)
-                   VALUES (?, ?, ?, ?)""",
-                (
-                    order_id,
-                    item["book"]["id"],
-                    item["quantity"],
-                    item["book"]["price"]
-                )
-            )
-
-            # Reduce stock after a successful order.
-            conn.execute(
-                "UPDATE books SET stock = stock - ? WHERE id = ?",
-                (item["quantity"], item["book"]["id"])
+        for item in order_items_data:
+            cursor.execute(
+                "INSERT INTO order_items (order_id, book_id, quantity, price) VALUES (?, ?, ?, ?)",
+                (order_id, item[0], item[1], item[2])
             )
 
         conn.commit()
         conn.close()
 
-        session["cart"] = {}
+        session.pop('cart', None)
+        flash(f"Order #{order_id} placed successfully!", "success")
+        return redirect(url_for('orders'))
 
-        return redirect(url_for("order_confirmation", order_id=order_id))
-
-    return render_template("checkout.html", items=items, total=total)
-
-
-@app.route("/order/<int:order_id>")
-def order_confirmation(order_id):
-    conn = get_db()
-
-    order = conn.execute(
-        "SELECT * FROM orders WHERE id = ?",
-        (order_id,)
-    ).fetchone()
-
-    if order is None:
-        conn.close()
-        flash("Order not found.", "error")
-        return redirect(url_for("home"))
-
-    items = conn.execute(
-        """SELECT order_items.quantity,
-                  order_items.price,
-                  books.title,
-                  books.author
-           FROM order_items
-           JOIN books ON order_items.book_id = books.id
-           WHERE order_items.order_id = ?""",
-        (order_id,)
-    ).fetchall()
+    items = []
+    total = 0.0
+    for book_id, qty in cart.items():
+        book = conn.execute("SELECT * FROM books WHERE id = ?", (int(book_id),)).fetchone()
+        if book:
+            item_total = book['price'] * qty
+            total += item_total
+            items.append({'book': book, 'quantity': qty, 'item_total': item_total})
 
     conn.close()
+    return render_template('checkout.html', items=items, total=total)
 
-    return render_template(
-        "order.html",
-        order=order,
-        items=items
-    )
-
-
-@app.route("/orders")
+@app.route('/orders')
 def orders():
     conn = get_db()
-    all_orders = conn.execute(
-        "SELECT * FROM orders ORDER BY id DESC"
-    ).fetchall()
+    orders_list = conn.execute("SELECT * FROM orders ORDER BY id DESC").fetchall()
     conn.close()
+    return render_template('orders.html', orders=orders_list)
 
-    return render_template("orders.html", orders=all_orders)
+@app.route('/order_confirmation/<int:order_id>')
+def order_confirmation(order_id):
+    conn = get_db()
+    order = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+    conn.close()
+    return render_template('orders.html', orders=[order] if order else [])
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(debug=True)

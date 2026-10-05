@@ -1,42 +1,44 @@
-{% extends "base.html" %}
-
-{% block title %}Orders - PageTurner Books{% endblock %}
+{% extends 'base.html' %}
 
 {% block content %}
-<section class="container">
-    <h1>All Orders</h1>
+<div class="container my-5" style="max-width: 900px;">
+    <h2 class="fw-bold mb-4"><i class="fa-solid fa-receipt me-2 text-primary"></i>My Orders</h2>
 
     {% if orders %}
-        <div class="cart-table-wrapper">
-            <table class="cart-table">
-                <thead>
-                    <tr>
-                        <th>Order ID</th>
-                        <th>Customer</th>
-                        <th>Phone</th>
-                        <th>Total</th>
-                        <th>Date</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for order in orders %}
-                    <tr>
-                        <td>
-                            <a href="{{ url_for('order_confirmation', order_id=order['id']) }}">
-                                #{{ order['id'] }}
-                            </a>
-                        </td>
-                        <td>{{ order['customer_name'] }}</td>
-                        <td>{{ order['phone'] }}</td>
-                        <td>₹{{ "%.2f"|format(order['total']) }}</td>
-                        <td>{{ order['created_at'] }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        <div class="row g-3">
+            {% for order in orders %}
+            <div class="card border-0 shadow-sm rounded-3 p-4 bg-white mb-3">
+                <div class="d-flex justify-content-between align-items-center border-bottom pb-3 mb-3">
+                    <div>
+                        <h5 class="fw-bold mb-1">Order #{{ order.id }}</h5>
+                        <span class="text-muted small">Placed on: {{ order.created_at if order.created_at else 'Recent' }}</span>
+                    </div>
+                    <div class="text-end">
+                        <span class="badge bg-success mb-1 d-block">Placed</span>
+                        <strong class="fs-5 text-primary">₹{{ "%.2f"|format(order.total_amount) }}</strong>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <p class="mb-1"><strong>Customer Name:</strong> {{ order.customer_name }}</p>
+                        <p class="mb-1"><strong>Phone:</strong> {{ order.phone }}</p>
+                    </div>
+                    <div class="col-md-6">
+                        <p class="mb-1"><strong>Delivery Address:</strong></p>
+                        <p class="text-muted small mb-0">{{ order.address }}</p>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
         </div>
     {% else %}
-        <p>No orders yet.</p>
+        <div class="text-center py-5 bg-white rounded shadow-sm border">
+            <i class="fa-solid fa-box-open text-muted mb-3" style="font-size: 4rem;"></i>
+            <h4>No orders found!</h4>
+            <p class="text-muted">You haven't placed any orders yet.</p>
+            <a href="{{ url_for('home') }}" class="btn btn-primary fw-bold px-4">Start Shopping</a>
+        </div>
     {% endif %}
-</section>
+</div>
 {% endblock %}
