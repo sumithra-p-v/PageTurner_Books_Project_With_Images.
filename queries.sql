@@ -1,22 +1,23 @@
--- 1. All books cheaper than 500
-SELECT * FROM books
-WHERE price < 500;
+SELECT * FROM books WHERE (title LIKE ? OR author LIKE ?) AND category = ? LIMIT ? OFFSET ?;
 
--- 2. Technology books sorted by price, highest first
-SELECT * FROM books
-WHERE category = 'Technology'
-ORDER BY price DESC;
+SELECT * FROM books WHERE id = ?;
 
--- 3. Number of books in each category
-SELECT category, COUNT(*) AS book_count
-FROM books
-GROUP BY category;
+UPDATE books SET stock = stock - ? WHERE id = ? AND stock >= ?;
 
--- 4. The most expensive book
-SELECT * FROM books
-WHERE price = (SELECT MAX(price) FROM books);
+INSERT INTO orders (user_id, total_amount, discount_amount, status) VALUES (?, ?, ?, ?);
 
--- 5. Each order with the customer name and total
-SELECT id, customer_name, total
-FROM orders
-ORDER BY id DESC;
+INSERT INTO order_items (order_id, book_id, quantity, price) VALUES (?, ?, ?, ?);
+
+INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?);
+
+SELECT * FROM users WHERE email = ?;
+
+INSERT OR IGNORE INTO wishlist (user_id, book_id) VALUES (?, ?);
+
+SELECT b.* FROM books b JOIN wishlist w ON b.id = w.book_id WHERE w.user_id = ?;
+
+SELECT * FROM coupons WHERE code = ? AND active = 1 AND expiry_date >= DATE('now');
+
+UPDATE orders SET status = ? WHERE id = ?;
+
+EXPLAIN QUERY PLAN SELECT * FROM books WHERE category = 'Technology';

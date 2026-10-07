@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container my-5">
+    <h2>My Wishlist</h2>
+    {% if books %}
+        <div class="row">
+            {% for book in books %}
+            <div class="col-md-4 mb-4">
+                <div class="card h-100">
+                    <img src="{{ book.image_url }}" class="card-img-top" alt="{{ book.title }}" style="height: 250px; object-fit: cover;">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ book.title }}</h5>
+                        <p class="card-text">By {{ book.author }}</p>
+                        <p class="fw-bold">₹{{ "%.2f"|format(book.price) }}</p>
+                        <button onclick="toggleWishlist({{ book.id }}, this)" class="btn btn-outline-danger active">♥ Remove</button>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p>Your wishlist is empty.</p>
+    {% endif %}
+</div>
+{% endblock %}

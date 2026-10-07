@@ -33,15 +33,20 @@
             <!-- Horizontal Links Alignment -->
             <nav class="d-flex align-items-center gap-3">
                 <a class="nav-link-custom" href="{{ url_for('home') }}">Home</a>
-                <a class="nav-link-custom" href="{{ url_for('home') }}">Books</a>
-                <a class="nav-link-custom" href="{{ url_for('orders') }}">Find Order</a>
-                <a class="nav-link-custom" href="{{ url_for('cart') }}">
+                <a class="nav-link-custom" href="{{ url_for('orders') }}">My Orders</a>
+                <a class="nav-link-custom" href="{{ url_for('view_wishlist') }}">Wishlist</a>
+                <a class="nav-link-custom" href="{{ url_for('view_cart') }}">
                     🛒 Cart
-                    {% if cart_count > 0 %}
-                        <span class="badge bg-danger rounded-pill">{{ cart_count }}</span>
+                    {% if session.get('cart') %}
+                        <span class="badge bg-danger rounded-pill">{{ session.get('cart')|length }}</span>
                     {% endif %}
                 </a>
-                <a class="nav-link-custom text-muted" href="{{ url_for('orders') }}">Admin</a>
+                {% if session.get('user_id') %}
+                    <a class="nav-link-custom text-muted" href="{{ url_for('logout') }}">Logout</a>
+                {% else %}
+                    <a class="nav-link-custom" href="{{ url_for('login') }}">Login</a>
+                {% endif %}
+                <a class="nav-link-custom text-danger" href="{{ url_for('admin_login') }}">Admin</a>
             </nav>
         </div>
     </header>

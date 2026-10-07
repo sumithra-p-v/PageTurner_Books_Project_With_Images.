@@ -1,3 +1,4 @@
+-- Reset and re-seed books table
 DELETE FROM books;
 
 INSERT INTO books (title, author, category, price, description, image_url, stock)
@@ -10,3 +11,11 @@ VALUES
 ('SQL for Beginners', 'Amit Patel', 'Technology', 425.00, 'Master relational databases easily.', 'https://covers.openlibrary.org/b/id/12539186-L.jpg', 7),
 ('Atomic Habits Guide', 'Ravi Verma', 'Self-Help', 550.00, 'Build good habits and break bad ones.', 'https://covers.openlibrary.org/b/id/10909258-L.jpg', 10),
 ('Think Better', 'Dr. Lisa Ray', 'Self-Help', 350.00, 'Tools for effective decision-making.', 'https://covers.openlibrary.org/b/id/9255566-L.jpg', 3);
+
+-- Seed initial discount coupons (Step 21)
+DELETE FROM coupons;
+
+INSERT INTO coupons (code, percent, expiry_date, active) 
+VALUES 
+('WELCOME10', 10.0, '2030-12-31', 1),
+('SAVE20', 20.0, '2030-12-31', 1);

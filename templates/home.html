@@ -1,59 +1,217 @@
-{% extends 'base.html' %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PageTurner Books | Bookstore</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background-color: #f8fafc; margin: 0; padding: 0; }
+        .top-banner { background-color: #0f172a; color: #e2e8f0; font-size: 0.85rem; padding: 6px 0; }
+        .hero-banner { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: #ffffff; padding: 40px 20px; }
+        .book-card { border: none; border-radius: 12px; background: #ffffff; transition: transform 0.25s; box-shadow: 0 4px 15px rgba(0,0,0,0.06); }
+        .book-card:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(0,0,0,0.12); }
+        .book-cover { height: 250px; object-fit: cover; border-radius: 12px 12px 0 0; width: 100%; }
+        .heart-btn { background: rgba(255, 255, 255, 0.9); border: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+    </style>
+</head>
+<body>
 
-{% block content %}
-<div class="container my-5">
-
-    <!-- Search and Filter Bar -->
-    <div class="card border-0 shadow-sm p-4 mb-5 bg-white rounded-3">
-        <h4 class="fw-bold mb-3">Find Your Book</h4>
-        <form action="{{ url_for('home') }}" method="GET" class="row g-3">
-            <div class="col-md-6">
-                <input type="text" name="search" class="form-control" placeholder="Search by title, author or category..." value="{{ request.args.get('search', '') }}">
-            </div>
-            <div class="col-md-4">
-                <select name="category" class="form-select">
-                    <option value="">All Categories</option>
-                    {% for cat in categories %}
-                        <option value="{{ cat }}" {% if request.args.get('category') == cat %}selected{% endif %}>{{ cat }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="col-md-2">
-                <button type="submit" class="btn btn-primary w-100 fw-bold">Search</button>
-            </div>
-        </form>
+    <div class="top-banner text-center w-100">
+        <span>🚚 Free Shipping on Orders Over ₹500</span>
+        <span class="mx-3">|</span>
+        <span>📚 Over 10,000+ Curated Titles</span>
     </div>
 
-    <!-- Books Horizontal Grid Row -->
-    <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 g-4">
-        {% for book in books %}
-        <div class="col">
-            <div class="card h-100 border-0 shadow-sm rounded-3 overflow-hidden bg-white">
-                <!-- Book Image Container -->
-                <div class="bg-light text-center p-3 d-flex align-items-center justify-content-center" style="height: 240px;">
-                    <img src="{{ book.image_url }}" alt="{{ book.title }}" class="img-fluid mh-100" style="object-fit: contain; max-height: 200px;">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top shadow-sm px-3">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold fs-4 me-4" href="/"><i class="fa-solid fa-book-open text-warning me-2"></i>PageTurner</a>
+            <div class="d-flex flex-wrap align-items-center gap-2 ms-auto">
+                <a href="/" class="btn btn-outline-light btn-sm rounded-pill px-3 fw-semibold"><i class="fa-solid fa-house me-1"></i> Home</a>
+                <a href="/orders" class="btn btn-outline-light btn-sm rounded-pill px-3 fw-semibold"><i class="fa-solid fa-box-archive me-1"></i> My Orders</a>
+                <a href="/wishlist" class="btn btn-outline-light btn-sm rounded-pill px-3 fw-semibold d-flex align-items-center gap-1"><i class="fa-solid fa-heart text-danger fs-6"></i> Wishlist</a>
+                <a href="/cart" class="btn btn-warning btn-sm rounded-pill px-3 fw-bold"><i class="fa-solid fa-cart-shopping me-1"></i> Cart</a>
+                <a href="/admin/login" class="btn btn-outline-warning btn-sm rounded-pill px-3 fw-semibold"><i class="fa-solid fa-user-gear me-1"></i> Admin Login</a>
+                {% if session.get('user_id') %}
+                    <a href="/logout" class="btn btn-outline-danger btn-sm rounded-pill px-3 ms-2">Logout</a>
+                {% else %}
+                    <a href="/login" class="btn btn-primary btn-sm rounded-pill px-3 ms-2">Login</a>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid px-4 mt-3">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ category }} alert-dismissible fade show shadow-sm" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+    </div>
+
+    <div class="hero-banner text-center">
+        <div class="container-fluid px-4">
+            <h1 class="fw-bold display-6 mb-2">Find Your Next Great Read</h1>
+            <p class="lead opacity-75 mb-4">Discover bestsellers, classic novels, and community reviews.</p>
+            <form action="/" method="GET" class="row g-2 justify-content-center max-w-xl mx-auto">
+                <div class="col-md-5">
+                    <input type="text" name="q" value="{{ q }}" class="form-control form-control-lg" placeholder="Search by title or author...">
                 </div>
+                <div class="col-md-3">
+                    <select name="category" class="form-select form-select-lg">
+                        <option value="">All Categories</option>
+                        {% for cat in categories %}
+                            <option value="{{ cat }}" {% if category == cat %}selected{% endif %}>{{ cat }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-warning btn-lg w-100 fw-bold">Filter</button>
+                </div>
+            </form>
+        </div>
+    </div>
 
-                <!-- Book Details -->
-                <div class="card-body d-flex flex-column p-3">
-                    <span class="text-uppercase text-muted fw-bold mb-1" style="font-size: 0.75rem;">{{ book.category }}</span>
-                    <h6 class="card-title fw-bold text-truncate mb-1" title="{{ book.title }}">{{ book.title }}</h6>
-                    <p class="text-muted small mb-3">by {{ book.author }}</p>
+    <div class="container-fluid px-4 py-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h4 class="fw-bold m-0 text-dark"><i class="fa-solid fa-layer-group text-warning me-2"></i>Book Collection</h4>
+            <form action="/" method="GET" class="d-flex gap-2">
+                <input type="hidden" name="q" value="{{ q }}">
+                <input type="hidden" name="category" value="{{ category }}">
+                <select name="sort" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="">Sort By: Featured</option>
+                    <option value="price_asc" {% if sort == 'price_asc' %}selected{% endif %}>Price: Low to High</option>
+                    <option value="price_desc" {% if sort == 'price_desc' %}selected{% endif %}>Price: High to Low</option>
+                    <option value="rating" {% if sort == 'rating' %}selected{% endif %}>Highest Rated</option>
+                </select>
+            </form>
+        </div>
 
-                    <div class="mt-auto d-flex align-items-center justify-content-between pt-2 border-top">
-                        <span class="fw-bold fs-6 text-primary">₹{{ "%.2f"|format(book.price) }}</span>
-                        <a href="{{ url_for('book_detail', book_id=book.id) }}" class="btn btn-outline-dark btn-sm fw-bold">View Book &rarr;</a>
+        <div class="row row-cols-2 row-cols-md-3 row-cols-lg-4 g-4">
+            {% for book in books %}
+            <div class="col">
+                <div class="card h-100 book-card position-relative">
+                    <button onclick="toggleWishlist({{ book.id }}, this)" class="heart-btn position-absolute top-0 end-0 m-2 shadow-sm" title="Add to Wishlist">
+                        <i class="fa-solid fa-heart text-danger"></i>
+                    </button>
+                    <img src="{{ book.image_url }}" class="card-img-top book-cover" alt="{{ book.title }}">
+                    <div class="card-body d-flex flex-column justify-content-between p-3">
+                        <div>
+                            <span class="badge bg-warning text-dark mb-2">⭐ {{ book.rating }}</span>
+                            <h6 class="card-title fw-bold text-dark text-truncate mb-1">{{ book.title }}</h6>
+                            <p class="text-muted small mb-2">{{ book.author }}</p>
+                        </div>
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <span class="fw-bold fs-5 text-primary">₹{{ "%.2f"|format(book.price) }}</span>
+                                <small class="text-secondary">{{ book.stock }} copies left</small>
+                            </div>
+                            <form action="/cart/add/{{ book.id }}" method="POST">
+                                <button type="submit" class="btn btn-warning btn-sm w-100 fw-bold" {% if book.stock <= 0 %}disabled{% endif %}>
+                                    <i class="fa-solid fa-cart-plus me-1"></i> Add to Cart
+                                </button>
+                            </form>
+                        </div>
                     </div>
                 </div>
             </div>
+            {% else %}
+            <div class="col-12 text-center py-5">
+                <p class="text-muted fs-5">No books match your selection.</p>
+                <a href="/" class="btn btn-outline-secondary">Reset Search</a>
+            </div>
+            {% endfor %}
         </div>
-        {% else %}
-        <div class="col-12 text-center py-5">
-            <h5>No books found matching your criteria.</h5>
-            <a href="{{ url_for('home') }}" class="btn btn-secondary btn-sm mt-2">Clear Search</a>
+
+        {% if total_pages > 1 %}
+        <nav class="mt-5">
+            <ul class="pagination justify-content-center">
+                {% for p in range(1, total_pages + 1) %}
+                <li class="page-item {% if page == p %}active{% endif %}">
+                    <a class="page-link px-3" href="/?page={{ p }}&q={{ q }}&category={{ category }}&sort={{ sort }}">{{ p }}</a>
+                </li>
+                {% endfor %}
+            </ul>
+        </nav>
+        {% endif %}
+
+        <hr class="my-5">
+        <div class="row g-4 mb-5">
+            <div class="col-lg-7">
+                <div class="accordion" id="customerReviewsAccordion">
+                    <div class="accordion-item border-0 shadow-sm rounded-3">
+                        <h2 class="accordion-header" id="reviewsHeader">
+                            <button class="accordion-button bg-white text-dark fw-bold fs-5 py-3 rounded-3" type="button" data-bs-toggle="collapse" data-bs-target="#collapseReviews">
+                                <i class="fa-solid fa-comments text-warning me-2"></i> Customer Reviews
+                            </button>
+                        </h2>
+                        <div id="collapseReviews" class="accordion-collapse collapse show">
+                            <div class="accordion-body bg-light p-3">
+                                {% for review in recent_reviews %}
+                                <div class="card p-3 border-0 shadow-sm bg-white mb-2">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <strong class="text-dark">{{ review.name }}</strong>
+                                        <span class="text-warning">⭐ {{ review.rating }}/5</span>
+                                    </div>
+                                    <small class="text-muted d-block mb-1">Book: {{ review.book_title }}</small>
+                                    <p class="mb-0 text-secondary small">"{{ review.comment }}"</p>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-5">
+                <div class="card p-4 border-0 shadow-sm">
+                    <h5 class="fw-bold mb-3"><i class="fa-solid fa-pen-to-square text-warning me-2"></i>Write a Customer Review</h5>
+                    <form action="/review/add" method="POST">
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold">Your Name</label>
+                            <input type="text" name="name" class="form-control form-control-sm" placeholder="e.g. Jane Doe" required>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold">Book Title</label>
+                            <input type="text" name="book_title" class="form-control form-control-sm" placeholder="e.g. Atomic Habits" required>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold">Rating (1 to 5 Stars)</label>
+                            <select name="rating" class="form-select form-select-sm" required>
+                                <option value="5" selected>⭐⭐⭐⭐⭐ (5 Stars)</option>
+                                <option value="4">⭐⭐⭐⭐ (4 Stars)</option>
+                                <option value="3">⭐⭐⭐ (3 Stars)</option>
+                                <option value="2">⭐⭐ (2 Stars)</option>
+                                <option value="1">⭐ (1 Star)</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Comments</label>
+                            <textarea name="comment" class="form-control form-control-sm" rows="3" placeholder="Share your reading experience..." required></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-warning btn-sm w-100 fw-bold">Submit Review</button>
+                    </form>
+                </div>
+            </div>
         </div>
-        {% endfor %}
+
     </div>
 
-</div>
-{% endblock %}
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function toggleWishlist(bookId, btn) {
+            fetch('/wishlist/toggle/' + bookId, { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+                btn.style.transform = data.added ? 'scale(1.25)' : 'scale(1.0)';
+            });
+        }
+    </script>
+</body>
+</html>
