@@ -18,17 +18,19 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT,
             name TEXT,
             email TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL
         )
     ''')
 
-    # Safely add 'name' column if an older users table is missing it (keeps all existing data!)
-    try:
-        cursor.execute("ALTER TABLE users ADD COLUMN name TEXT")
-    except sqlite3.OperationalError:
-        pass
+    # Safely add missing columns if upgrading an existing database
+    for col, col_type in [("username", "TEXT"), ("name", "TEXT")]:
+        try:
+            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
+        except sqlite3.OperationalError:
+            pass
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS books (
@@ -172,7 +174,7 @@ def home():
         total_pages=total_pages
     )
 
-# Customer Registration Route (Auto-login & redirect to Home)
+# Customer Registration Route
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
@@ -186,22 +188,40 @@ def register():
 
         conn = get_db_connection()
         cursor = conn.cursor()
+        
+        # Ensure schema compatibility for older databases
         try:
-            cursor.execute("INSERT INTO users (name, email, password) VALUES (?, ?, ?)", (name, email, password))
+            cursor.execute("ALTER TABLE users ADD COLUMN username TEXT")
+            cursor.execute("ALTER TABLE users ADD COLUMN name TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        # Check if email already exists
+        cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+        existing_user = cursor.fetchone()
+        
+        if existing_user:
+            conn.close()
+            flash("This email is already registered. Please log in instead.", "danger")
+            return redirect(url_for('login'))
+
+        try:
+            # Insert including username as email to satisfy any strict constraints
+            cursor.execute("INSERT INTO users (username, name, email, password) VALUES (?, ?, ?, ?)", (email, name, email, password))
             conn.commit()
             
-            # Automatically log in the user upon registration
             user_id = cursor.lastrowid
             session['user_id'] = user_id
             session['user_name'] = name
             session['user_email'] = email
             
             conn.close()
-            flash(f"Login successful! Welcome, {name}.", "success")
+            flash(f"Registration successful! Welcome, {name}.", "success")
             return redirect(url_for('home'))
-        except sqlite3.IntegrityError:
+        except Exception as e:
             conn.close()
-            flash("Email address is already registered.", "danger")
+            flash(f"Registration error: {str(e)}", "danger")
             return redirect(url_for('register'))
 
     return render_template_string("""
@@ -235,18 +255,18 @@ def login():
 
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users WHERE email = ? AND password = ?", (email, password))
+        cursor.execute("SELECT * FROM users WHERE (email = ? OR username = ?) AND password = ?", (email, email, password))
         user = cursor.fetchone()
         conn.close()
 
         if user:
             session['user_id'] = user['id']
-            session['user_name'] = user['name']
+            session['user_name'] = user['name'] or user['username']
             session['user_email'] = user['email']
-            flash(f"Login successful! Welcome back, {user['name']}.", "success")
+            flash(f"Login successful! Welcome back, {session['user_name']}.", "success")
             return redirect(url_for('home'))
         else:
-            flash("Invalid email or password.", "danger")
+            flash("Invalid email or password. Please check your credentials.", "danger")
             return redirect(url_for('login'))
 
     return render_template_string("""
