@@ -2,294 +2,126 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Dashboard - PageTurner Bookstore</title>
-    <!-- Bootstrap 5 CSS -->
+    <title>Admin Dashboard - PageTurner</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- FontAwesome Icons -->
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <style>
-        body {
-            background-color: #f4f6f9;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        .sidebar {
-            min-height: 100vh;
-            background: #1e293b;
-            color: #fff;
-        }
-        .stat-card {
-            border: none;
-            border-radius: 12px;
-            transition: transform 0.2s ease, shadow 0.2s ease;
-        }
-        .stat-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 8px 15px rgba(0,0,0,0.1);
-        }
-        .badge-placed { background-color: #0d6efd; }
-        .badge-processing { background-color: #ffc107; color: #000; }
-        .badge-shipped { background-color: #0dcaf0; color: #000; }
-        .badge-delivered { background-color: #198754; }
-        .badge-cancelled { background-color: #dc3545; }
-        .table-responsive {
-            border-radius: 10px;
-            background: #ffffff;
-        }
-    </style>
 </head>
-<body>
+<body class="bg-light">
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar Navigation -->
+            <div class="col-md-2 bg-dark min-vh-100 p-3 text-white">
+                <h4 class="fw-bold text-warning mb-4">PageTurner</h4>
+                <ul class="nav nav-pills flex-column mb-auto">
+                    <li class="nav-item mb-1">
+                        <a href="/admin/dashboard" class="nav-link active fw-bold">Dashboard</a>
+                    </li>
+                    <li class="nav-item mb-1">
+                        <a href="/admin/inventory" class="nav-link text-white fw-bold">📚 Inventory</a>
+                    </li>
+                    <li class="nav-item mb-1">
+                        <a href="/admin/coupons" class="nav-link text-white fw-bold">🏷️ Coupons</a>
+                    </li>
+                    <li class="nav-item mb-1">
+                        <a href="/admin/analytics" class="nav-link text-white fw-bold">📊 Analytics</a>
+                    </li>
+                    <li class="nav-item mb-1">
+                        <a href="/admin/reviews" class="nav-link text-white fw-bold">💬 Reviews</a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="/" class="nav-link text-white">Storefront</a>
+                    </li>
+                </ul>
+                <hr>
+                <a href="/admin/logout" class="btn btn-outline-danger btn-sm w-100">Logout Admin</a>
+            </div>
 
-<div class="d-flex">
-    <!-- Sidebar -->
-    <div class="sidebar p-3 d-none d-md-block" style="width: 250px;">
-        <h4 class="fw-bold mb-4 text-warning"><i class="fa-solid fa-book-open me-2"></i>PageTurner</h4>
-        <div class="text-uppercase small text-muted mb-2">Navigation</div>
-        <ul class="nav nav-pills flex-column mb-auto">
-            <li class="nav-item mb-2">
-                <a href="/admin/dashboard" class="nav-link active bg-warning text-dark fw-bold">
-                    <i class="fa-solid fa-chart-line me-2"></i> Dashboard
-                </a>
-            </li>
-            <li class="nav-item mb-2">
-                <a href="/" class="nav-link text-white opacity-75">
-                    <i class="fa-solid fa-store me-2"></i> Storefront
-                </a>
-            </li>
-        </ul>
-        <hr class="border-secondary">
-        <a href="/admin/logout" class="btn btn-outline-danger w-100 btn-sm">
-            <i class="fa-solid fa-right-from-bracket me-2"></i> Logout Admin
-        </a>
-    </div>
-
-    <!-- Main Content Area -->
-    <div class="flex-grow-1 p-4">
-        <!-- Top Header -->
-        <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
-            <div>
-                <h2 class="fw-bold m-0">Interactive Order Management</h2>
-                <p class="text-muted small mb-0">Track customer orders, manage shipping status, and export sales history.</p>
-            </div>
-            <div class="d-flex gap-2">
-                <a href="/admin/export_orders" class="btn btn-success fw-bold shadow-sm">
-                    <i class="fa-solid fa-file-csv me-2"></i> Export Orders CSV
-                </a>
-                <a href="/admin/logout" class="btn btn-outline-danger d-md-none">Logout</a>
-            </div>
-        </div>
-
-        <!-- Flash Messages -->
-        {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}
-            {% for category, message in messages %}
-              <div class="alert alert-{{ category }} alert-dismissible fade show shadow-sm" role="alert">
-                {{ message }}
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-              </div>
-            {% endfor %}
-          {% endif %}
-        {% endwith %}
-
-        <!-- Statistics Summary Cards -->
-        <div class="row g-3 mb-4" id="statsCards">
-            <div class="col-6 col-md-3">
-                <div class="card stat-card bg-white p-3 shadow-sm border-start border-4 border-primary">
-                    <div class="text-muted small fw-semibold">Total Orders</div>
-                    <div class="fs-3 fw-bold text-dark" id="statTotalOrders">0</div>
-                </div>
-            </div>
-            <div class="col-6 col-md-3">
-                <div class="card stat-card bg-white p-3 shadow-sm border-start border-4 border-success">
-                    <div class="text-muted small fw-semibold">Total Revenue</div>
-                    <div class="fs-3 fw-bold text-success" id="statTotalRevenue">₹0.00</div>
-                </div>
-            </div>
-            <div class="col-6 col-md-3">
-                <div class="card stat-card bg-white p-3 shadow-sm border-start border-4 border-warning">
-                    <div class="text-muted small fw-semibold">Pending / Placed</div>
-                    <div class="fs-3 fw-bold text-warning" id="statPendingOrders">0</div>
-                </div>
-            </div>
-            <div class="col-6 col-md-3">
-                <div class="card stat-card bg-white p-3 shadow-sm border-start border-4 border-info">
-                    <div class="text-muted small fw-semibold">Delivered Orders</div>
-                    <div class="fs-3 fw-bold text-info" id="statDeliveredOrders">0</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Interactive Search & Filter Controls -->
-        <div class="card p-3 mb-4 border-0 shadow-sm">
-            <div class="row g-2 align-items-center">
-                <div class="col-md-5">
-                    <div class="input-group">
-                        <span class="input-group-text bg-light border-end-0"><i class="fa-solid fa-magnifying-glass text-muted"></i></span>
-                        <input type="text" id="searchInput" class="form-control border-start-0" placeholder="Search by Order ID, Customer Name, Email, or Phone...">
+            <!-- Main Content Area -->
+            <div class="col-md-10 p-4">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div>
+                        <h2 class="fw-bold m-0">Interactive Order Management</h2>
+                        <small class="text-muted">Track customer orders, manage shipping status, and view sales insights.</small>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <a href="/admin/inventory" class="btn btn-warning fw-bold">📚 Inventory Control</a>
+                        <a href="/admin/analytics" class="btn btn-primary fw-bold">📊 Sales Analytics</a>
+                        <a href="/admin/export_orders" class="btn btn-success fw-bold">📥 Export Orders CSV</a>
                     </div>
                 </div>
-                <div class="col-md-4">
-                    <select id="statusFilter" class="form-select">
-                        <option value="ALL">All Order Statuses</option>
-                        <option value="Placed">Placed</option>
-                        <option value="Processing">Processing</option>
-                        <option value="Shipped">Shipped</option>
-                        <option value="Delivered">Delivered</option>
-                        <option value="Cancelled">Cancelled</option>
-                    </select>
-                </div>
-                <div class="col-md-3 text-end">
-                    <button class="btn btn-outline-secondary w-100" onclick="resetFilters()">
-                        <i class="fa-solid fa-rotate-left me-1"></i> Reset Filters
-                    </button>
+
+                <!-- Flash Messages -->
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                  {% if messages %}
+                    {% for category, message in messages %}
+                      <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                      </div>
+                    {% endfor %}
+                  {% endif %}
+                {% endwith %}
+
+                <!-- Orders Table -->
+                <div class="card shadow-sm border-0">
+                    <div class="card-body p-0">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Order #</th>
+                                    <th>Customer Details</th>
+                                    <th>Address</th>
+                                    <th>Amount</th>
+                                    <th>Date & Time</th>
+                                    <th>Status</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for order in orders %}
+                                <tr>
+                                    <td class="fw-bold">#{{ order.id }}</td>
+                                    <td>
+                                        <div class="fw-bold">{{ order.customer_name or 'Guest' }}</div>
+                                        <small class="text-muted d-block">{{ order.customer_email or '' }}</small>
+                                        <small class="text-muted">{{ order.customer_phone or '' }}</small>
+                                    </td>
+                                    <td><small class="text-secondary">{{ order.customer_address or 'N/A' }}</small></td>
+                                    <td class="fw-bold text-primary">₹{{ "%.2f"|format(order.total_amount) }}</td>
+                                    <td><small class="text-muted">{{ order.created_at }}</small></td>
+                                    <td>
+                                        {% if order.status == 'Delivered' %}
+                                            <span class="badge bg-success">{{ order.status }}</span>
+                                        {% elif order.status == 'Shipped' %}
+                                            <span class="badge bg-info text-dark">{{ order.status }}</span>
+                                        {% elif order.status == 'Processing' %}
+                                            <span class="badge bg-warning text-dark">{{ order.status }}</span>
+                                        {% else %}
+                                            <span class="badge bg-primary">{{ order.status }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <form method="POST" action="/admin/order/update_status/{{ order.id }}" class="d-flex gap-1">
+                                            <select name="status" class="form-select form-select-sm">
+                                                <option value="Placed" {% if order.status == 'Placed' %}selected{% endif %}>Placed</option>
+                                                <option value="Processing" {% if order.status == 'Processing' %}selected{% endif %}>Processing</option>
+                                                <option value="Shipped" {% if order.status == 'Shipped' %}selected{% endif %}>Shipped</option>
+                                                <option value="Delivered" {% if order.status == 'Delivered' %}selected{% endif %}>Delivered</option>
+                                            </select>
+                                            <button type="submit" class="btn btn-primary btn-sm">✓</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="7" class="text-center py-4 text-muted">No orders found.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
-
-        <!-- Orders Table -->
-        <div class="table-responsive shadow-sm border">
-            <table class="table table-hover align-middle mb-0" id="ordersTable">
-                <thead class="table-dark">
-                    <tr>
-                        <th>Order #</th>
-                        <th>Customer Details</th>
-                        <th>Address</th>
-                        <th>Amount</th>
-                        <th>Date & Time</th>
-                        <th>Status</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for order in orders %}
-                    <tr class="order-row" 
-                        data-id="{{ order.id }}" 
-                        data-name="{{ order.customer_name or 'Guest' }}" 
-                        data-email="{{ order.customer_email or '' }}" 
-                        data-phone="{{ order.customer_phone or '' }}" 
-                        data-address="{{ order.customer_address or 'N/A' }}"
-                        data-amount="{{ order.total_amount }}"
-                        data-status="{{ order.status }}">
-                        
-                        <td class="fw-bold">#{{ order.id }}</td>
-                        <td>
-                            <div class="fw-bold text-dark">{{ order.customer_name or 'Guest User' }}</div>
-                            <div class="small text-muted"><i class="fa-regular fa-envelope me-1"></i>{{ order.customer_email or 'No email' }}</div>
-                            <div class="small text-muted"><i class="fa-solid fa-phone me-1"></i>{{ order.customer_phone or 'No phone' }}</div>
-                        </td>
-                        <td>
-                            <span class="d-inline-block text-truncate" style="max-width: 180px;" title="{{ order.customer_address }}">
-                                {{ order.customer_address or 'N/A' }}
-                            </span>
-                        </td>
-                        <td class="fw-bold text-primary">₹{{ "%.2f"|format(order.total_amount) }}</td>
-                        <td class="small text-muted">{{ order.created_at }}</td>
-                        <td>
-                            {% set status_class = 'badge-placed' %}
-                            {% if order.status == 'Processing' %}{% set status_class = 'badge-processing' %}
-                            {% elif order.status == 'Shipped' %}{% set status_class = 'badge-shipped' %}
-                            {% elif order.status == 'Delivered' %}{% set status_class = 'badge-delivered' %}
-                            {% elif order.status == 'Cancelled' %}{% set status_class = 'badge-cancelled' %}{% endif %}
-                            
-                            <span class="badge {{ status_class }} px-2 py-1 fs-6">{{ order.status }}</span>
-                        </td>
-                        <td>
-                            <form action="/admin/order/update_status/{{ order.id }}" method="POST" class="d-inline-flex gap-1">
-                                <select name="status" class="form-select form-select-sm" style="width: 120px;">
-                                    <option value="Placed" {% if order.status == 'Placed' %}selected{% endif %}>Placed</option>
-                                    <option value="Processing" {% if order.status == 'Processing' %}selected{% endif %}>Processing</option>
-                                    <option value="Shipped" {% if order.status == 'Shipped' %}selected{% endif %}>Shipped</option>
-                                    <option value="Delivered" {% if order.status == 'Delivered' %}selected{% endif %}>Delivered</option>
-                                    <option value="Cancelled" {% if order.status == 'Cancelled' %}selected{% endif %}>Cancelled</option>
-                                </select>
-                                <button type="submit" class="btn btn-primary btn-sm" title="Save Status">
-                                    <i class="fa-solid fa-check"></i>
-                                </button>
-                            </form>
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="7" class="text-center py-5 text-muted">
-                            <i class="fa-solid fa-box-open fs-1 d-block mb-2"></i>
-                            No orders found in database yet.
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-
     </div>
-</div>
-
-<!-- Bootstrap 5 JS -->
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-
-<!-- Interactive Filter & Calculation Script -->
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        calculateStats();
-
-        // Search & Filter Event Listeners
-        document.getElementById('searchInput').addEventListener('input', filterOrders);
-        document.getElementById('statusFilter').addEventListener('change', filterOrders);
-    });
-
-    function calculateStats() {
-        const rows = document.querySelectorAll('.order-row');
-        let totalOrders = rows.length;
-        let totalRevenue = 0;
-        let pendingOrders = 0;
-        let deliveredOrders = 0;
-
-        rows.forEach(row => {
-            const amount = parseFloat(row.dataset.amount) || 0;
-            const status = row.dataset.status;
-
-            totalRevenue += amount;
-            if (status === 'Placed' || status === 'Processing') {
-                pendingOrders++;
-            } else if (status === 'Delivered') {
-                deliveredOrders++;
-            }
-        });
-
-        document.getElementById('statTotalOrders').innerText = totalOrders;
-        document.getElementById('statTotalRevenue').innerText = '₹' + totalRevenue.toFixed(2);
-        document.getElementById('statPendingOrders').innerText = pendingOrders;
-        document.getElementById('statDeliveredOrders').innerText = deliveredOrders;
-    }
-
-    function filterOrders() {
-        const query = document.getElementById('searchInput').value.toLowerCase().trim();
-        const selectedStatus = document.getElementById('statusFilter').value;
-        const rows = document.querySelectorAll('.order-row');
-
-        rows.forEach(row => {
-            const id = row.dataset.id.toLowerCase();
-            const name = row.dataset.name.toLowerCase();
-            const email = row.dataset.email.toLowerCase();
-            const phone = row.dataset.phone.toLowerCase();
-            const address = row.dataset.address.toLowerCase();
-            const status = row.dataset.status;
-
-            const matchesSearch = id.includes(query) || name.includes(query) || email.includes(query) || phone.includes(query) || address.includes(query);
-            const matchesStatus = (selectedStatus === 'ALL') || (status === selectedStatus);
-
-            if (matchesSearch && matchesStatus) {
-                row.style.display = '';
-            } else {
-                row.style.display = 'none';
-            }
-        });
-    }
-
-    function resetFilters() {
-        document.getElementById('searchInput').value = '';
-        document.getElementById('statusFilter').value = 'ALL';
-        filterOrders();
-    }
-</script>
 </body>
 </html>
