@@ -101,6 +101,7 @@
                                     </td>
                                     <td>
                                         <form method="POST" action="/admin/order/update_status/{{ order.id }}" class="d-flex gap-1">
+                                            <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
                                             <select name="status" class="form-select form-select-sm">
                                                 <option value="Placed" {% if order.status == 'Placed' %}selected{% endif %}>Placed</option>
                                                 <option value="Processing" {% if order.status == 'Processing' %}selected{% endif %}>Processing</option>

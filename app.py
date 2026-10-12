@@ -2,7 +2,7 @@ import sqlite3
 import secrets
 from datetime import datetime, timedelta
 from functools import wraps
-from flask import Flask, render_template, render_template_string, request, redirect, url_for, session, jsonify, flash
+from flask import Flask, render_template, render_template_string, request, redirect, url_for, session, jsonify, flash, abort
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_pageturner_key'
@@ -154,6 +154,7 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    # Feature 28: Shipping Address Book table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS addresses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -581,6 +582,210 @@ def reset_password(token):
     </html>
     """)
 
+# Feature 28: Address Book Routes
+@app.route('/addresses')
+def list_addresses():
+    if not session.get('user_id'):
+        flash("Please log in to manage your addresses.", "warning")
+        return redirect(url_for('login'))
+        
+    user_id = session['user_id']
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM addresses WHERE user_id = ? ORDER BY is_default DESC, id DESC", (user_id,))
+    addr_list = cursor.fetchall()
+    conn.close()
+
+    cards = ""
+    for a in addr_list:
+        default_badge = '<span class="badge bg-success ms-2">Default</span>' if a['is_default'] else ''
+        default_btn = '' if a['is_default'] else f'''
+        <form method="POST" action="/address/{a['id']}/default" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{session.get('csrf_token', '')}">
+            <button type="submit" class="btn btn-sm btn-outline-success">Set as Default</button>
+        </form>
+        '''
+        cards += f"""
+        <div class="card mb-3 shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title fw-bold">{a['label']}{default_badge}</h5>
+                <p class="card-text mb-1">{a['line1']}</p>
+                <p class="card-text text-muted small">{a['city']} - {a['pincode']}</p>
+                <div class="d-flex gap-2 mt-2">
+                    <a href="/address/{a['id']}/edit" class="btn btn-sm btn-outline-primary">Edit</a>
+                    <a href="/address/{a['id']}/delete" class="btn btn-sm btn-outline-danger">Delete</a>
+                    {default_btn}
+                </div>
+            </div>
+        </div>
+        """
+
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html>
+    <head><title>Address Book - PageTurner</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
+    <body class="bg-light p-4">
+    <div class="container bg-white p-4 rounded shadow-sm" style="max-width: 700px;">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h3 class="fw-bold m-0">📍 Shipping Address Book</h3>
+            <a href="/address/add" class="btn btn-primary btn-sm fw-bold">+ Add New Address</a>
+        </div>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}{% for cat, msg in messages %}<div class="alert alert-{{cat}} p-2 small">{{msg}}</div>{% endfor %}{% endif %}
+        {% endwith %}
+        """ + (cards or "<p class='text-muted text-center py-4'>No addresses saved yet.</p>") + """
+        <a href="/" class="btn btn-outline-dark w-100 mt-3">Back to Storefront</a>
+    </div>
+    </body>
+    </html>
+    """)
+
+@app.route('/address/add', methods=['GET', 'POST'])
+@csrf_required
+def add_address():
+    if not session.get('user_id'):
+        flash("Please log in to add an address.", "warning")
+        return redirect(url_for('login'))
+
+    if request.method == 'POST':
+        user_id = session['user_id']
+        label = request.form.get('label', '').strip()
+        line1 = request.form.get('line1', '').strip()
+        city = request.form.get('city', '').strip()
+        pincode = request.form.get('pincode', '').strip()
+        is_default = 1 if request.form.get('is_default') else 0
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("BEGIN TRANSACTION")
+            if is_default:
+                cursor.execute("UPDATE addresses SET is_default = 0 WHERE user_id = ?", (user_id,))
+            cursor.execute("INSERT INTO addresses (user_id, label, line1, city, pincode, is_default) VALUES (?, ?, ?, ?, ?, ?)",
+                           (user_id, label, line1, city, pincode, is_default))
+            conn.commit()
+            flash("Address saved successfully!", "success")
+            return redirect(url_for('list_addresses'))
+        except Exception as e:
+            conn.rollback()
+            flash(f"Error adding address: {str(e)}", "danger")
+        finally:
+            conn.close()
+
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html>
+    <head><title>Add Address - PageTurner</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
+    <body class="bg-light p-4">
+    <div class="container bg-white p-4 rounded shadow-sm" style="max-width: 500px;">
+        <h4 class="fw-bold mb-3">Add New Address</h4>
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+            <div class="mb-2"><label>Address Label (e.g. Home, Office)</label><input type="text" name="label" class="form-control" required></div>
+            <div class="mb-2"><label>Address Line 1</label><input type="text" name="line1" class="form-control" required></div>
+            <div class="mb-2"><label>City</label><input type="text" name="city" class="form-control" required></div>
+            <div class="mb-3"><label>Pincode</label><input type="text" name="pincode" class="form-control" required></div>
+            <div class="form-check mb-3"><input type="checkbox" name="is_default" class="form-check-input" id="def"><label class="form-check-label" for="def">Set as Default Address</label></div>
+            <button type="submit" class="btn btn-success w-100 fw-bold">Save Address</button>
+            <a href="/addresses" class="btn btn-link text-muted w-100 text-center mt-2">Cancel</a>
+        </form>
+    </div>
+    </body>
+    </html>
+    """)
+
+@app.route('/address/<int:address_id>/edit', methods=['GET', 'POST'])
+@csrf_required
+def edit_address(address_id):
+    if not session.get('user_id'): return redirect(url_for('login'))
+    user_id = session['user_id']
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM addresses WHERE id = ? AND user_id = ?", (address_id, user_id))
+    addr = cursor.fetchone()
+
+    if not addr:
+        conn.close()
+        flash("Address not found.", "danger")
+        return redirect(url_for('list_addresses'))
+
+    if request.method == 'POST':
+        label = request.form.get('label', '').strip()
+        line1 = request.form.get('line1', '').strip()
+        city = request.form.get('city', '').strip()
+        pincode = request.form.get('pincode', '').strip()
+        is_default = 1 if request.form.get('is_default') else 0
+
+        try:
+            cursor.execute("BEGIN TRANSACTION")
+            if is_default:
+                cursor.execute("UPDATE addresses SET is_default = 0 WHERE user_id = ?", (user_id,))
+            cursor.execute("UPDATE addresses SET label=?, line1=?, city=?, pincode=?, is_default=? WHERE id=? AND user_id=?",
+                           (label, line1, city, pincode, is_default, address_id, user_id))
+            conn.commit()
+            flash("Address updated!", "success")
+            return redirect(url_for('list_addresses'))
+        except Exception as e:
+            conn.rollback()
+            flash(f"Error updating address: {str(e)}", "danger")
+        finally:
+            conn.close()
+
+    conn.close()
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html>
+    <head><title>Edit Address - PageTurner</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
+    <body class="bg-light p-4">
+    <div class="container bg-white p-4 rounded shadow-sm" style="max-width: 500px;">
+        <h4 class="fw-bold mb-3">Edit Address</h4>
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+            <div class="mb-2"><label>Address Label</label><input type="text" name="label" value=" """ + addr['label'] + """ " class="form-control" required></div>
+            <div class="mb-2"><label>Address Line 1</label><input type="text" name="line1" value=" """ + addr['line1'] + """ " class="form-control" required></div>
+            <div class="mb-2"><label>City</label><input type="text" name="city" value=" """ + addr['city'] + """ " class="form-control" required></div>
+            <div class="mb-3"><label>Pincode</label><input type="text" name="pincode" value=" """ + addr['pincode'] + """ " class="form-control" required></div>
+            <div class="form-check mb-3"><input type="checkbox" name="is_default" class="form-check-input" id="def" """ + ('checked' if addr['is_default'] else '') + """><label class="form-check-label" for="def">Set as Default Address</label></div>
+            <button type="submit" class="btn btn-primary w-100 fw-bold">Update Address</button>
+            <a href="/addresses" class="btn btn-link text-muted w-100 text-center mt-2">Cancel</a>
+        </form>
+    </div>
+    </body>
+    </html>
+    """)
+
+@app.route('/address/<int:address_id>/delete')
+def delete_address(address_id):
+    if not session.get('user_id'): return redirect(url_for('login'))
+    user_id = session['user_id']
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM addresses WHERE id = ? AND user_id = ?", (address_id, user_id))
+    conn.commit()
+    conn.close()
+    flash("Address deleted.", "info")
+    return redirect(url_for('list_addresses'))
+
+@app.route('/address/<int:address_id>/default', methods=['POST'])
+@csrf_required
+def set_default_address(address_id):
+    if not session.get('user_id'): return redirect(url_for('login'))
+    user_id = session['user_id']
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN TRANSACTION")
+        cursor.execute("UPDATE addresses SET is_default = 0 WHERE user_id = ?", (user_id,))
+        cursor.execute("UPDATE addresses SET is_default = 1 WHERE id = ? AND user_id = ?", (address_id, user_id))
+        conn.commit()
+        flash("Default address updated.", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error: {str(e)}", "danger")
+    finally:
+        conn.close()
+    return redirect(url_for('list_addresses'))
+
 @app.route('/cart/add/<int:book_id>', methods=['GET', 'POST'])
 @csrf_required
 def add_to_cart(book_id):
@@ -777,53 +982,80 @@ def checkout():
     if not cart: return redirect(url_for('home'))
     total = session.get('calculated_total', 0.0)
     discount = session.get('applied_discount', 0.0)
-    
-    if request.method == 'POST':
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("BEGIN TRANSACTION")
-            cursor.execute("""
-                INSERT INTO orders (user_id, customer_name, customer_email, customer_phone, customer_address, total_amount, discount_amount, status) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'Placed')
-            """, (session.get('user_id'), request.form.get('name'), request.form.get('email'), request.form.get('phone'), request.form.get('address'), total, discount))
-            order_id = cursor.lastrowid
+    user_id = session.get('user_id')
 
-            for book_id_str, qty in cart.items():
-                book_id = int(book_id_str)
-                cursor.execute("SELECT price, stock FROM books WHERE id = ?", (book_id,))
-                book = cursor.fetchone()
-                if not book or book['stock'] < qty:
-                    raise Exception(f"Insufficient stock for book ID {book_id}")
-                
-                cursor.execute("UPDATE books SET stock = stock - ? WHERE id = ?", (qty, book_id))
-                cursor.execute("INSERT INTO order_items (order_id, book_id, quantity, price_at_purchase) VALUES (?, ?, ?, ?)", (order_id, book_id, qty, book['price']))
-                cursor.execute("INSERT INTO stock_log (book_id, change, reason, user_id) VALUES (?, ?, 'purchase', ?)", (book_id, -qty, session.get('user_id')))
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-            conn.commit()
-            session['cart'] = {}
-            session.pop('applied_coupon', None)
-            flash("Order placed successfully!", "success")
-            return redirect(url_for('orders'))
-        except Exception as e:
-            conn.rollback()
-            flash(f"Checkout failed: {str(e)}", "danger")
-            return redirect(url_for('cart'))
-        finally:
-            conn.close()
+    try:
+        saved_addresses = []
+        default_address_str = ""
+        if user_id:
+            cursor.execute("SELECT * FROM addresses WHERE user_id = ? ORDER BY is_default DESC, id DESC", (user_id,))
+            saved_addresses = cursor.fetchall()
+            if saved_addresses:
+                def_addr = saved_addresses[0]
+                default_address_str = f"{def_addr['line1']}, {def_addr['city']} - {def_addr['pincode']}"
 
-    name = session.get('user_name', '')
-    email = session.get('user_email', '')
+        if request.method == 'POST':
+            try:
+                cursor.execute("BEGIN TRANSACTION")
+                cursor.execute("""
+                    INSERT INTO orders (user_id, customer_name, customer_email, customer_phone, customer_address, total_amount, discount_amount, status) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'Placed')
+                """, (user_id, request.form.get('name'), request.form.get('email'), request.form.get('phone'), request.form.get('address'), total, discount))
+                order_id = cursor.lastrowid
+
+                for book_id_str, qty in cart.items():
+                    book_id = int(book_id_str)
+                    cursor.execute("SELECT price, stock FROM books WHERE id = ?", (book_id,))
+                    book = cursor.fetchone()
+                    if not book or book['stock'] < qty:
+                        raise Exception(f"Insufficient stock for book ID {book_id}")
+                    
+                    cursor.execute("UPDATE books SET stock = stock - ? WHERE id = ?", (qty, book_id))
+                    cursor.execute("INSERT INTO order_items (order_id, book_id, quantity, price_at_purchase) VALUES (?, ?, ?, ?)", (order_id, book_id, qty, book['price']))
+                    cursor.execute("INSERT INTO stock_log (book_id, change, reason, user_id) VALUES (?, ?, 'purchase', ?)", (book_id, -qty, user_id))
+
+                conn.commit()
+                session['cart'] = {}
+                session.pop('applied_coupon', None)
+                flash("Order placed successfully!", "success")
+                return redirect(url_for('orders'))
+            except Exception as e:
+                conn.rollback()
+                flash(f"Checkout failed: {str(e)}", "danger")
+                return redirect(url_for('cart'))
+
+        name = session.get('user_name', '')
+        email = session.get('user_email', '')
+    finally:
+        conn.close()
+
+    address_options = ""
+    if saved_addresses:
+        address_options = "<label class='form-label fw-bold mt-2'>Or Pick a Saved Address:</label><select id='saved_addr' class='form-select mb-2' onchange='document.getElementById(\"addr_input\").value = this.value;'><option value=''>-- Select Saved Address --</option>"
+        for a in saved_addresses:
+            full_str = f"{a['line1']}, {a['city']} - {a['pincode']}"
+            is_def_lbl = " (Default)" if a['is_default'] else ""
+            address_options += f"<option value='{full_str}'>{a['label']}{is_def_lbl}: {full_str}</option>"
+        address_options += "</select>"
+
     return render_template_string("""
     <!DOCTYPE html><html><head><title>Checkout</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-    <body class="bg-light p-4"><div class="container bg-white p-4 rounded" style="max-width: 600px;"><h3>Checkout</h3>
+    <body class="bg-light p-4"><div class="container bg-white p-4 rounded shadow-sm" style="max-width: 600px;">
+    <h3 class="fw-bold mb-3">Checkout</h3>
     <form method="POST">
     <input type="hidden" name="csrf_token" value=""" + f'"{session.get("csrf_token", "")}"' + """>
-    <input type="text" name="name" value=""" + f'"{name}"' + """ class="form-control mb-2" placeholder="Full Name" required>
-    <input type="email" name="email" value=""" + f'"{email}"' + """ class="form-control mb-2" placeholder="Email" required>
-    <input type="tel" name="phone" class="form-control mb-2" placeholder="Phone" required>
-    <textarea name="address" class="form-control mb-2" placeholder="Delivery Address" required></textarea>
-    <h5 class="my-3 text-success">Total Payable: ₹""" + f"{total:.2f}" + f" (Saved ₹{discount:.2f})" + """</h5><button type="submit" class="btn btn-success w-100">Place Order</button></form></div></body></html>
+    <div class="mb-2"><label>Full Name</label><input type="text" name="name" value=""" + f'"{name}"' + """ class="form-control" required></div>
+    <div class="mb-2"><label>Email</label><input type="email" name="email" value=""" + f'"{email}"' + """ class="form-control" required></div>
+    <div class="mb-2"><label>Phone</label><input type="tel" name="phone" class="form-control" required></div>
+    """ + address_options + """
+    <div class="mb-3"><label class="form-label fw-bold mt-2">Delivery Address</label>
+    <textarea id="addr_input" name="address" class="form-control" placeholder="Enter delivery address..." required>""" + default_address_str + """</textarea></div>
+    <h5 class="my-3 text-success fw-bold">Total Payable: ₹""" + f"{total:.2f}" + f" (Saved ₹{discount:.2f})" + """</h5>
+    <button type="submit" class="btn btn-success w-100 fw-bold">Place Order</button>
+    </form></div></body></html>
     """)
 
 @app.route('/orders')
@@ -847,6 +1079,7 @@ def orders():
         <div class='card mb-3 p-3'>
             <h5>Order #{o['id']}</h5>
             <p class='mb-1'><b>Status:</b> <span class="badge bg-secondary">{o['status']}</span></p>
+            <p class='mb-1'><b>Shipping Address:</b> {o['customer_address'] or 'N/A'}</p>
             <p class='mb-0'><b>Total:</b> ₹{o['total_amount']:.2f} (Discount applied: ₹{o['discount_amount'] or 0.0:.2f})</p>
             {cancel_btn}
         </div>
@@ -969,7 +1202,7 @@ def delete_coupon(coupon_id):
     return redirect(url_for('admin_coupons'))
 
 @app.route('/admin/export_orders', endpoint='export_orders')
-@role_required('admin', 'staff')
+@role_required('admin')
 def export_orders():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1004,24 +1237,26 @@ def admin_analytics():
 def admin_inventory():
     conn = get_db_connection()
     cursor = conn.cursor()
-    if request.method == 'POST':
-        title = request.form.get('title')
-        author = request.form.get('author')
-        price = float(request.form.get('price', 0))
-        stock = int(request.form.get('stock', 10))
-        category = request.form.get('category')
-        image_url = request.form.get('image_url', 'https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=400')
-        
-        cursor.execute("INSERT INTO books (title, author, price, stock, category, image_url) VALUES (?, ?, ?, ?, ?, ?)",
-                       (title, author, price, stock, category, image_url))
-        book_id = cursor.lastrowid
-        cursor.execute("INSERT INTO stock_log (book_id, change, reason, user_id) VALUES (?, ?, 'admin_edit', ?)", (book_id, stock, session.get('user_id')))
-        conn.commit()
-        flash("Book added successfully!", "success")
+    try:
+        if request.method == 'POST':
+            title = request.form.get('title')
+            author = request.form.get('author')
+            price = float(request.form.get('price', 0))
+            stock = int(request.form.get('stock', 10))
+            category = request.form.get('category')
+            image_url = request.form.get('image_url', 'https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=400')
+            
+            cursor.execute("INSERT INTO books (title, author, price, stock, category, image_url) VALUES (?, ?, ?, ?, ?, ?)",
+                           (title, author, price, stock, category, image_url))
+            book_id = cursor.lastrowid
+            cursor.execute("INSERT INTO stock_log (book_id, change, reason, user_id) VALUES (?, ?, 'admin_edit', ?)", (book_id, stock, session.get('user_id')))
+            conn.commit()
+            flash("Book added successfully!", "success")
 
-    cursor.execute("SELECT * FROM books ORDER BY id DESC")
-    books = cursor.fetchall()
-    conn.close()
+        cursor.execute("SELECT * FROM books ORDER BY id DESC")
+        books = cursor.fetchall()
+    finally:
+        conn.close()
     
     books_rows = "".join([f"<tr><td>{b['id']}</td><td class='fw-bold'>{b['title']}</td><td>{b['author']}</td><td>₹{b['price']:.2f}</td><td>{b['stock']}</td><td><span class='badge bg-secondary'>{b['category']}</span></td></tr>" for b in books])
     
