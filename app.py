@@ -8,12 +8,29 @@ app = Flask(__name__)
 app.secret_key = 'super_secret_pageturner_key'
 DATABASE = 'database.db'
 
+ALLOWED_STATUS_TRANSITIONS = {
+    'Placed': ['Packed', 'Shipped', 'Delivered', 'Cancelled'],
+    'Packed': ['Shipped', 'Delivered', 'Cancelled'],
+    'Shipped': ['Delivered', 'Cancelled'],
+    'Delivered': ['Placed', 'Packed', 'Shipped', 'Cancelled'],
+    'Cancelled': ['Placed', 'Packed', 'Shipped', 'Delivered']
+}
+
 def get_db_connection():
     conn = sqlite3.connect(DATABASE)
     conn.row_factory = sqlite3.Row
     return conn
 
-# Hand-rolled CSRF Protection Hook & Decorator
+@app.template_filter('inr')
+def format_inr(paise):
+    try:
+        val = int(paise or 0)
+        if val % 100 == 0:
+            return f"{val // 100}"
+        return f"{val / 100:.2f}"
+    except (ValueError, TypeError):
+        return "0"
+
 @app.before_request
 def ensure_csrf_token():
     if 'csrf_token' not in session:
@@ -43,10 +60,10 @@ def role_required(*allowed_roles):
                 return """
                 <!DOCTYPE html>
                 <html>
-                <head><title>403 Forbidden - PageTurner</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
+                <head><title>403 Forbidden - PageTurner</title><link rel="stylesheet" href="/static/style.css"></head>
                 <body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
-                    <div class="card p-5 text-center shadow-sm" style="max-width: 450px;">
-                        <h1 class="display-1 text-danger fw-bold">403</h1>
+                    <div class="card p-5 text-center shadow-sm" style="max-width: 450px; margin: 100px auto;">
+                        <h1 class="display-1 text-danger fw-bold" style="color: var(--danger);">403</h1>
                         <h4 class="fw-bold mb-3">Access Forbidden</h4>
                         <p class="text-muted">You do not have permission to access this resource.</p>
                         <a href="/" class="btn btn-primary mt-3 fw-bold">Return to Storefront</a>
@@ -83,7 +100,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             author TEXT NOT NULL,
-            price REAL NOT NULL CHECK(price >= 0),
+            price INTEGER NOT NULL CHECK(price >= 0),
             rating REAL DEFAULT 4.5 CHECK(rating >= 0 AND rating <= 5),
             stock INTEGER DEFAULT 10 CHECK(stock >= 0),
             category TEXT NOT NULL,
@@ -106,7 +123,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             code TEXT UNIQUE NOT NULL,
             discount_type TEXT NOT NULL, 
-            discount_value REAL NOT NULL,
+            discount_value INTEGER NOT NULL,
             is_active INTEGER DEFAULT 1
         )
     ''')
@@ -141,20 +158,31 @@ def init_db():
             customer_email TEXT,
             customer_phone TEXT,
             customer_address TEXT,
-            total_amount REAL NOT NULL CHECK(total_amount >= 0),
-            discount_amount REAL DEFAULT 0.0,
+            total_amount INTEGER NOT NULL CHECK(total_amount >= 0),
+            discount_amount INTEGER DEFAULT 0,
             status TEXT DEFAULT 'Placed',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
 
-    for col_name, col_type in [("customer_name", "TEXT"), ("customer_email", "TEXT"), ("customer_phone", "TEXT"), ("customer_address", "TEXT"), ("discount_amount", "REAL DEFAULT 0.0")]:
+    for col_name, col_type in [("customer_name", "TEXT"), ("customer_email", "TEXT"), ("customer_phone", "TEXT"), ("customer_address", "TEXT"), ("discount_amount", "INTEGER DEFAULT 0")]:
         try:
             cursor.execute(f"ALTER TABLE orders ADD COLUMN {col_name} {col_type}")
         except sqlite3.OperationalError:
             pass
 
-    # Feature 28: Shipping Address Book table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS order_status_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            changed_by TEXT NOT NULL,
+            changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            note TEXT,
+            FOREIGN KEY (order_id) REFERENCES orders (id)
+        )
+    ''')
+
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS addresses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -174,14 +202,14 @@ def init_db():
             order_id INTEGER NOT NULL,
             book_id INTEGER NOT NULL,
             quantity INTEGER NOT NULL,
-            price_at_purchase REAL NOT NULL DEFAULT 0.0,
+            price_at_purchase INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (order_id) REFERENCES orders (id),
             FOREIGN KEY (book_id) REFERENCES books (id)
         )
     ''')
 
     try:
-        cursor.execute("ALTER TABLE order_items ADD COLUMN price_at_purchase REAL DEFAULT 0.0")
+        cursor.execute("ALTER TABLE order_items ADD COLUMN price_at_purchase INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
 
@@ -207,21 +235,21 @@ def init_db():
     cursor.execute('SELECT COUNT(*) FROM books')
     if cursor.fetchone()[0] == 0:
         sample_books = [
-            ("The Great Gatsby", "F. Scott Fitzgerald", 499.00, 4.8, 15, "Fiction", "https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=400"),
-            ("To Kill a Mockingbird", "Harper Lee", 550.00, 4.9, 12, "Fiction", "https://images.unsplash.com/photo-1512820790803-83ca734da794?w=400"),
-            ("1984", "George Orwell", 399.00, 4.7, 8, "Sci-Fi", "https://images.unsplash.com/photo-1543002588-bfa74002ed7e?w=400"),
-            ("Atomic Habits", "James Clear", 650.00, 5.0, 20, "Self-Help", "https://images.unsplash.com/photo-1589829085413-56de8ae18c73?w=400"),
-            ("The Hobbit", "J.R.R. Tolkien", 599.00, 4.8, 10, "Fantasy", "https://images.unsplash.com/photo-1629992101753-56d196c8aced?w=400"),
-            ("Sapiens", "Yuval Noah Harari", 750.00, 4.6, 14, "History", "https://images.unsplash.com/photo-1497633762265-9d179a990aa6?w=400"),
-            ("Clean Code", "Robert C. Martin", 1250.00, 4.9, 6, "Technology", "https://images.unsplash.com/photo-1532012197267-da84d127e765?w=400"),
-            ("Deep Work", "Cal Newport", 499.00, 4.7, 11, "Self-Help", "https://images.unsplash.com/photo-1524995997946-a1c2e315a42f?w=400")
+            ("The Great Gatsby", "F. Scott Fitzgerald", 49900, 4.8, 15, "Fiction", "https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=400"),
+            ("To Kill a Mockingbird", "Harper Lee", 55000, 4.9, 12, "Fiction", "https://images.unsplash.com/photo-1512820790803-83ca734da794?w=400"),
+            ("1984", "George Orwell", 39900, 4.7, 8, "Sci-Fi", "https://images.unsplash.com/photo-1543002588-bfa74002ed7e?w=400"),
+            ("Atomic Habits", "James Clear", 65000, 5.0, 20, "Self-Help", "https://images.unsplash.com/photo-1589829085413-56de8ae18c73?w=400"),
+            ("The Hobbit", "J.R.R. Tolkien", 59900, 4.8, 10, "Fantasy", "https://images.unsplash.com/photo-1629992101753-56d196c8aced?w=400"),
+            ("Sapiens", "Yuval Noah Harari", 75000, 4.6, 14, "History", "https://images.unsplash.com/photo-1497633762265-9d179a990aa6?w=400"),
+            ("Clean Code", "Robert C. Martin", 125000, 4.9, 6, "Technology", "https://images.unsplash.com/photo-1532012197267-da84d127e765?w=400"),
+            ("Deep Work", "Cal Newport", 49900, 4.7, 11, "Self-Help", "https://images.unsplash.com/photo-1524995997946-a1c2e315a42f?w=400")
         ]
         cursor.executemany('INSERT INTO books (title, author, price, rating, stock, category, image_url) VALUES (?, ?, ?, ?, ?, ?, ?)', sample_books)
 
     cursor.execute('SELECT COUNT(*) FROM coupons')
     if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO coupons (code, discount_type, discount_value, is_active) VALUES ('SAVE10', 'percentage', 10.0, 1)")
-        cursor.execute("INSERT INTO coupons (code, discount_type, discount_value, is_active) VALUES ('FLAT100', 'fixed', 100.0, 1)")
+        cursor.execute("INSERT INTO coupons (code, discount_type, discount_value, is_active) VALUES ('SAVE10', 'percentage', 10, 1)")
+        cursor.execute("INSERT INTO coupons (code, discount_type, discount_value, is_active) VALUES ('FLAT100', 'fixed', 10000, 1)")
 
     conn.commit()
     conn.close()
@@ -249,12 +277,6 @@ def home():
     q = request.args.get('q', '').strip()
     category = request.args.get('category', '').strip()
     sort = request.args.get('sort', '').strip()
-    try:
-        page = int(request.args.get('page', 1))
-        if page < 1: page = 1
-    except ValueError:
-        page = 1
-    per_page = 8
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -268,30 +290,157 @@ def home():
         query += " AND category = ?"
         params.append(category)
 
-    count_query = f"SELECT COUNT(*) FROM ({query})"
-    cursor.execute(count_query, params)
-    total_books = cursor.fetchone()[0]
-    total_pages = (total_books + per_page - 1) // per_page if total_books > 0 else 1
-    if page > total_pages: page = total_pages
-
     if sort == 'price_asc': query += " ORDER BY price ASC"
     elif sort == 'price_desc': query += " ORDER BY price DESC"
     elif sort == 'rating': query += " ORDER BY rating DESC"
     else: query += " ORDER BY id DESC"
 
-    offset = (page - 1) * per_page
-    query += " LIMIT ? OFFSET ?"
-    params.extend([per_page, offset])
-
     cursor.execute(query, params)
     books = cursor.fetchall()
+
     cursor.execute("SELECT DISTINCT category FROM books")
     categories = [row['category'] for row in cursor.fetchall()]
+
     cursor.execute("SELECT * FROM reviews ORDER BY id DESC")
     recent_reviews = cursor.fetchall()
     conn.close()
 
-    return render_template('home.html', books=books, categories=categories, recent_reviews=recent_reviews, q=q, category=category, sort=sort, page=page, total_pages=total_pages)
+    book_cards = ""
+    for b in books:
+        price_display = format_inr(b['price'])
+        book_cards += f"""
+        <div style="border: 1px solid #f1f5f9; border-radius: 12px; padding: 16px; background: #fff; transition: transform 0.2s, box-shadow 0.2s; position: relative;">
+            <span style="position: absolute; top: 12px; left: 12px; background: #ff5e62; color: white; font-size: 10px; padding: 3px 8px; border-radius: 4px; font-weight: 700;">POPULAR</span>
+            <img src="{b['image_url']}" style="width: 100%; height: 200px; object-fit: contain; margin-bottom: 12px; border-radius: 4px;">
+            <div style="font-size: 14px; font-weight: 700; margin: 4px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{b['title']}</div>
+            <div style="font-size: 12px; color: #64748b; margin-bottom: 6px;">{b['author']}</div>
+            <div style="color: #f59e0b; font-size: 11px; margin-bottom: 8px;">★ ★ ★ ★ ★ ({b['rating']})</div>
+            <div style="font-size: 16px; font-weight: 800; color: #ff5e62; margin-bottom: 12px;">{price_display}</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                <a href="/book/{b['id']}" style="padding: 6px; border-radius: 6px; font-size: 12px; font-weight: 600; text-align: center; text-decoration: none; border: 1px solid #cbd5e1; background: #fff; color: #1e293b;">View</a>
+                <form method="POST" action="/cart/add/{b['id']}" style="margin:0;">
+                    <input type="hidden" name="csrf_token" value="{session.get('csrf_token', '')}">
+                    <button type="submit" style="width:100%; padding: 6px; border-radius: 6px; font-size: 12px; font-weight: 600; text-align: center; border: 1px solid #fef08a; background: #fef08a; color: #000; cursor: pointer;">Add Cart</button>
+                </form>
+            </div>
+        </div>
+        """
+
+    review_cards = ""
+    for r in recent_reviews:
+        review_cards += f"""
+        <div style="background: #fff; border: 1px solid #f1f5f9; border-radius: 8px; padding: 14px; margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 13px;">
+                <span>{r['name']} <small style="color: #64748b;">on {r['book_title']}</small></span>
+                <span style="color: #f59e0b;">{r['rating']} ⭐</span>
+            </div>
+            <p style="margin: 6px 0 0 0; font-size: 13px; color: #475569;">"{r['comment']}"</p>
+        </div>
+        """
+
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>PageTurner - Modern BookStore</title>
+        <link rel="stylesheet" href="/static/style.css">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+        <style>
+            :root { --pink-primary: #ff5e62; --text-dark: #1e293b; --text-muted: #64748b; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #fff; color: var(--text-dark); }
+            .top-bar { background-color: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 12px; padding: 6px 40px; display: flex; justify-content: space-between; align-items: center; color: var(--text-muted); }
+            .header-nav { display: flex; justify-content: space-between; align-items: center; padding: 16px 40px; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,0.03); position: sticky; top: 0; z-index: 100; }
+            .logo { font-size: 24px; font-weight: 800; color: var(--pink-primary); text-decoration: none; display: flex; align-items: center; gap: 6px; }
+            .nav-links { display: flex; gap: 24px; list-style: none; margin: 0; padding: 0; }
+            .nav-links a { text-decoration: none; color: var(--text-dark); font-weight: 600; font-size: 14px; }
+            .header-icons { display: flex; align-items: center; gap: 18px; font-size: 16px; }
+            .header-icons a { color: var(--text-dark); text-decoration: none; }
+            .hero-banner { background: linear-gradient(135deg, #e0f2fe 0%, #fbcfe8 50%, #fef08a 100%); border-radius: 20px; margin: 20px 40px; padding: 40px 60px; display: flex; align-items: center; justify-content: space-between; }
+            .btn-shop { background: var(--pink-primary); color: white; padding: 12px 28px; border-radius: 30px; border: none; font-weight: 700; text-decoration: none; display: inline-block; box-shadow: 0 4px 14px rgba(255, 94, 98, 0.4); }
+            .features-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; padding: 20px 40px; }
+            .feature-item { display: flex; align-items: center; gap: 14px; }
+            .feature-item i { font-size: 24px; color: var(--pink-primary); }
+            .books-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; padding: 0 40px; margin-bottom: 40px; }
+        </style>
+    </head>
+    <body>
+        <div class="top-bar">
+            <span>Need any help? Call us +91 98765 43210</span>
+            <span>Summer sale discount off 50%! <b>Shop Now</b></span>
+            <span>2-3 business days delivery & free returns</span>
+        </div>
+
+        <header class="header-nav">
+            <a href="/" class="logo"><i class="fa-solid fa-book-open"></i> PageTurner</a>
+            <ul class="nav-links">
+                <li><a href="/">HOME</a></li>
+                <li><a href="/?category=Fiction">FICTION</a></li>
+                <li><a href="/?category=Self-Help">SELF-HELP</a></li>
+                <li><a href="/orders">MY ORDERS</a></li>
+                <li><a href="/addresses">ADDRESSES</a></li>
+                <li><a href="/admin/dashboard" style="color: var(--pink-primary);">ADMIN DASHBOARD</a></li>
+            </ul>
+            <div class="header-icons">
+                <a href="/wishlist"><i class="fa-regular fa-heart"></i></a>
+                <a href="/cart"><i class="fa-solid fa-cart-shopping"></i></a>
+                {% if session.user_id or session.admin_logged_in %}
+                    <a href="/logout" title="Logout"><i class="fa-solid fa-right-from-bracket"></i></a>
+                {% else %}
+                    <a href="/login" title="Login"><i class="fa-regular fa-user"></i></a>
+                {% endif %}
+            </div>
+        </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}<div style="padding: 10px 40px;">{% for cat, msg in messages %}<div class="alert alert-{{cat}}" style="padding: 10px; border-radius: 6px; margin-bottom: 10px;">{{msg}}</div>{% endfor %}</div>{% endif %}
+        {% endwith %}
+
+        <section class="hero-banner">
+            <div>
+                <h1 style="font-size: 42px; font-weight: 800; margin-bottom: 12px;">How Innovation Works</h1>
+                <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 24px;">Discount available. Grab your copy now!</p>
+                <a href="/cart" class="btn-shop">Shop Product</a>
+            </div>
+            <div>
+                <img src="https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=400" style="max-height: 280px; border-radius: 8px; box-shadow: -10px 15px 30px rgba(0,0,0,0.15);">
+            </div>
+        </section>
+
+        <section class="features-bar">
+            <div class="feature-item"><i class="fa-solid fa-truck-fast"></i><div><h6 style="margin:0; font-weight:700;">Free Delivery</h6><small style="color:var(--text-muted);">Fast delivery to your home.</small></div></div>
+            <div class="feature-item"><i class="fa-solid fa-award"></i><div><h6 style="margin:0; font-weight:700;">Quality Guarantee</h6><small style="color:var(--text-muted);">Authentic book editions.</small></div></div>
+            <div class="feature-item"><i class="fa-solid fa-tags"></i><div><h6 style="margin:0; font-weight:700;">Daily Offers</h6><small style="color:var(--text-muted);">Enjoy discount coupons.</small></div></div>
+            <div class="feature-item"><i class="fa-solid fa-shield-halved"></i><div><h6 style="margin:0; font-weight:700;">100% Secure Payment</h6><small style="color:var(--text-muted);">Protected transactions.</small></div></div>
+        </section>
+
+        <div style="padding: 0 40px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="font-weight: 700; margin: 0;">Best Selling Items</h3>
+        </div>
+
+        <div class="books-grid">
+            """ + (book_cards or "<p class='text-muted'>No books found.</p>") + """
+        </div>
+
+        <div style="padding: 0 40px; margin-bottom: 40px;">
+            <h4 style="font-weight: 700; margin-bottom: 16px;">💬 Customer Reviews</h4>
+            """ + (review_cards or "<p class='text-muted'>No reviews submitted yet.</p>") + """
+            
+            <div class="card" style="padding: 16px; background: #f8fafc; border-radius: 8px; margin-top: 20px;">
+                <h5 style="font-weight: bold; margin-top: 0;">Leave a Review</h5>
+                <form method="POST" action="/review/add" style="display: grid; grid-template-columns: repeat(3, 1fr) auto; gap: 8px;">
+                    <input type="hidden" name="csrf_token" value=" """ + session.get('csrf_token', '') + """ ">
+                    <input type="text" name="name" class="form-control" placeholder="Your Name" required>
+                    <input type="text" name="book_title" class="form-control" placeholder="Book Title" required>
+                    <input type="number" min="1" max="5" name="rating" class="form-control" placeholder="Rating (1-5)" required>
+                    <input type="text" name="comment" class="form-control" placeholder="Your comment..." style="grid-column: span 3;" required>
+                    <button type="submit" class="btn btn-primary" style="grid-column: span 1; font-weight: bold;">Submit</button>
+                </form>
+            </div>
+        </div>
+    </body>
+    </html>
+    """)
 
 @app.route('/review/add', methods=['POST'])
 @csrf_required
@@ -327,60 +476,60 @@ def book_detail(book_id):
     recs = get_recommendations(book_id)
     recs_cards = ""
     for r in recs:
+        formatted_price = format_inr(r['price'])
         recs_cards += f"""
-        <div class="col-md-3">
-            <div class="card h-100 shadow-sm border-0 text-center p-2">
-                <img src="{r['image_url']}" class="card-img-top mx-auto" style="height: 140px; object-fit: contain;">
-                <div class="card-body p-2">
-                    <h6 class="fw-bold mb-1 text-truncate">{r['title']}</h6>
-                    <small class="text-muted d-block">{r['author']}</small>
-                    <span class="fw-bold text-primary">₹{r['price']:.2f}</span>
-                    <a href="/book/{r['id']}" class="btn btn-sm btn-outline-primary w-100 mt-2">View</a>
-                </div>
+        <div class="card" style="text-align: center; padding: 10px;">
+            <img src="{r['image_url']}" style="height: 140px; object-fit: contain; margin: 0 auto;">
+            <div style="padding: 8px 0;">
+                <h6 style="font-weight: bold; margin: 4px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{r['title']}</h6>
+                <small class="text-muted" style="display: block;">{r['author']}</small>
+                <span style="font-weight: bold; color: var(--primary);">{formatted_price}</span>
+                <a href="/book/{r['id']}" class="btn btn-outline" style="display: block; margin-top: 8px; padding: 4px 8px; font-size: 12px;">View</a>
             </div>
         </div>
         """
 
     recs_section = f"""
-    <div class="mt-5">
-        <h5 class="fw-bold mb-3">🛒 Customers Also Bought</h5>
-        <div class="row g-3">
+    <div style="margin-top: 30px;">
+        <h5 style="font-weight: bold; margin-bottom: 12px;">🛒 Customers Also Bought</h5>
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
             {recs_cards}
         </div>
     </div>
     """ if recs else ""
 
     csrf_tok = session.get('csrf_token', '')
+    price_str = format_inr(book['price'])
 
     return render_template_string("""
     <!DOCTYPE html>
     <html>
-    <head><title>""" + book['title'] + """ - PageTurner</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-    <body class="bg-light p-4">
-    <div class="container bg-white p-4 rounded shadow-sm" style="max-width: 800px;">
-        <div class="row align-items-center">
-            <div class="col-md-4 text-center">
-                <img src=" """ + book['image_url'] + """ " class="img-fluid rounded" style="max-height: 250px;">
+    <head><title>""" + book['title'] + """ - PageTurner</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body style="background-color: var(--bg-light); padding: 20px;">
+    <div class="container card" style="max-width: 800px; padding: 24px;">
+        <div style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap;">
+            <div style="text-align: center; flex: 1; min-width: 200px;">
+                <img src=" """ + book['image_url'] + """ " style="max-height: 250px; max-width: 100%; border-radius: var(--radius);">
             </div>
-            <div class="col-md-8">
-                <h3 class="fw-bold">""" + book['title'] + """</h3>
-                <h6 class="text-muted">by """ + book['author'] + """</h6>
-                <p class="mt-2"><span class="badge bg-secondary">""" + book['category'] + """</span> <span class="badge bg-warning text-dark">""" + str(book['rating']) + """ ⭐</span></p>
-                <h4 class="text-primary fw-bold">₹""" + f"{book['price']:.2f}" + """</h4>
-                <p class="text-muted small">Stock Available: """ + str(book['stock']) + """</p>
+            <div style="flex: 2; min-width: 250px;">
+                <h2 style="font-weight: bold; margin-top: 0;">""" + book['title'] + """</h2>
+                <h5 class="text-muted">by """ + book['author'] + """</h5>
+                <p style="margin: 8px 0;"><span style="background: #e2e8f0; padding: 3px 8px; border-radius: 4px; font-size: 12px;">""" + book['category'] + """</span> <span style="background: #fef08a; padding: 3px 8px; border-radius: 4px; font-size: 12px;">""" + str(book['rating']) + """ ⭐</span></p>
+                <h3 style="color: var(--primary); font-weight: bold;">""" + price_str + """</h3>
+                <p class="text-muted" style="font-size: 13px;">Stock Available: """ + str(book['stock']) + """</p>
                 <form method="POST" action="/cart/add/""" + str(book['id']) + """">
                     <input type="hidden" name="csrf_token" value=" """ + csrf_tok + """ ">
-                    <button type="submit" class="btn btn-warning fw-bold">Add to Cart</button>
+                    <button type="submit" class="btn btn-warning" style="font-weight: bold; width: 100%; margin-bottom: 8px;">Add to Cart</button>
                 </form>
-                <form method="POST" action="/wishlist/add/""" + str(book['id']) + """" class="mt-2">
+                <form method="POST" action="/wishlist/add/""" + str(book['id']) + """" style="margin: 0;">
                     <input type="hidden" name="csrf_token" value=" """ + csrf_tok + """ ">
-                    <button type="submit" class="btn btn-outline-danger btn-sm fw-bold">❤️ Add to Wishlist</button>
+                    <button type="submit" class="btn btn-outline" style="font-size: 13px; width: 100%; color: var(--danger); border-color: var(--danger);">❤️ Add to Wishlist</button>
                 </form>
             </div>
         </div>
         """ + recs_section + """
-        <hr class="my-4">
-        <a href="/" class="btn btn-outline-dark">Return to Catalog</a>
+        <hr style="margin: 24px 0; border: 0; border-top: 1px solid var(--border-color);">
+        <a href="/" class="btn btn-outline">Return to Catalog</a>
     </div>
     </body>
     </html>
@@ -418,18 +567,18 @@ def register():
     return render_template_string("""
     <!DOCTYPE html>
     <html>
-    <head><title>Customer Register - PageTurner</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
+    <head><title>Customer Register - PageTurner</title><link rel="stylesheet" href="/static/style.css"></head>
     <body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
-        <div class="card p-4 shadow-sm" style="width: 380px;">
+        <div class="card p-4 shadow-sm" style="width: 380px; margin: 100px auto;">
             <h4 class="fw-bold text-center mb-3">Create Customer Account</h4>
             <form method="POST">
                 <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-                <div class="mb-3"><label>Full Name</label><input type="text" name="name" class="form-control" required></div>
-                <div class="mb-3"><label>Email Address</label><input type="email" name="email" class="form-control" required></div>
-                <div class="mb-3"><label>Password</label><input type="password" name="password" class="form-control" required></div>
+                <div class="form-group"><label class="form-label">Full Name</label><input type="text" name="name" class="form-control" required></div>
+                <div class="form-group"><label class="form-label">Email Address</label><input type="email" name="email" class="form-control" required></div>
+                <div class="form-group"><label class="form-label">Password</label><input type="password" name="password" class="form-control" required></div>
                 <button type="submit" class="btn btn-primary w-100 fw-bold">Sign Up</button>
             </form>
-            <div class="text-center mt-3 small">Already have an account? <a href="/login">Login here</a></div>
+            <div class="text-center mt-3" style="font-size: 13px;">Already have an account? <a href="/login">Login here</a></div>
         </div>
     </body>
     </html>
@@ -483,17 +632,17 @@ def login():
     return render_template_string("""
     <!DOCTYPE html>
     <html>
-    <head><title>Customer Login - PageTurner</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
+    <head><title>Customer Login - PageTurner</title><link rel="stylesheet" href="/static/style.css"></head>
     <body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
-        <div class="card p-4 shadow-sm" style="width: 380px;">
+        <div class="card p-4 shadow-sm" style="width: 380px; margin: 100px auto;">
             <h4 class="fw-bold text-center mb-3">Customer Login</h4>
             <form method="POST">
                 <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-                <div class="mb-3"><label>Email Address</label><input type="email" name="email" class="form-control" required></div>
-                <div class="mb-3"><label>Password</label><input type="password" name="password" class="form-control" required></div>
+                <div class="form-group"><label class="form-label">Email Address</label><input type="email" name="email" class="form-control" required></div>
+                <div class="form-group"><label class="form-label">Password</label><input type="password" name="password" class="form-control" required></div>
                 <button type="submit" class="btn btn-primary w-100 fw-bold">Login</button>
             </form>
-            <div class="d-flex justify-content-between mt-3 small">
+            <div style="display: flex; justify-content: space-between; margin-top: 15px; font-size: 13px;">
                 <a href="/register">Register here</a>
                 <a href="/forgot_password" class="text-muted">Forgot password?</a>
             </div>
@@ -525,17 +674,17 @@ def forgot_password():
     return render_template_string("""
     <!DOCTYPE html>
     <html>
-    <head><title>Forgot Password - PageTurner</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
+    <head><title>Forgot Password - PageTurner</title><link rel="stylesheet" href="/static/style.css"></head>
     <body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
-        <div class="card p-4 shadow-sm" style="width: 400px;">
+        <div class="card p-4 shadow-sm" style="width: 400px; margin: 100px auto;">
             <h4 class="fw-bold text-center mb-3">🔑 Forgot Password</h4>
             <form method="POST">
                 <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-                <div class="mb-3"><label class="form-label">Email Address</label><input type="email" name="email" class="form-control" required></div>
+                <div class="form-group"><label class="form-label">Email Address</label><input type="email" name="email" class="form-control" required></div>
                 <button type="submit" class="btn btn-primary w-100 fw-bold">Generate Reset Link</button>
             </form>
-            {% if reset_link %}<div class="mt-3 p-2 bg-light border rounded small"><a href="{{ reset_link }}">{{ reset_link }}</a></div>{% endif %}
-            <div class="text-center mt-3 small"><a href="/login">Back to Login</a></div>
+            {% if reset_link %}<div style="margin-top: 15px; padding: 8px; background: var(--bg-light); border: 1px solid var(--border-color); border-radius: 4px; font-size: 12px;"><a href="{{ reset_link }}">{{ reset_link }}</a></div>{% endif %}
+            <div class="text-center mt-3" style="font-size: 13px;"><a href="/login">Back to Login</a></div>
         </div>
     </body>
     </html>
@@ -568,13 +717,13 @@ def reset_password(token):
     return render_template_string("""
     <!DOCTYPE html>
     <html>
-    <head><title>Reset Password - PageTurner</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
+    <head><title>Reset Password - PageTurner</title><link rel="stylesheet" href="/static/style.css"></head>
     <body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
-        <div class="card p-4 shadow-sm" style="width: 380px;">
+        <div class="card p-4 shadow-sm" style="width: 380px; margin: 100px auto;">
             <h4 class="fw-bold text-center mb-3">Set New Password</h4>
             <form method="POST">
                 <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-                <div class="mb-3"><label class="form-label">New Password</label><input type="password" name="password" class="form-control" required></div>
+                <div class="form-group"><label class="form-label">New Password</label><input type="password" name="password" class="form-control" required></div>
                 <button type="submit" class="btn btn-success w-100 fw-bold">Update Password</button>
             </form>
         </div>
@@ -582,7 +731,6 @@ def reset_password(token):
     </html>
     """)
 
-# Feature 28: Address Book Routes
 @app.route('/addresses')
 def list_addresses():
     if not session.get('user_id'):
@@ -598,22 +746,22 @@ def list_addresses():
 
     cards = ""
     for a in addr_list:
-        default_badge = '<span class="badge bg-success ms-2">Default</span>' if a['is_default'] else ''
+        default_badge = '<span style="background: var(--success); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 8px;">Default</span>' if a['is_default'] else ''
         default_btn = '' if a['is_default'] else f'''
-        <form method="POST" action="/address/{a['id']}/default" class="d-inline">
+        <form method="POST" action="/address/{a['id']}/default" style="display: inline;">
             <input type="hidden" name="csrf_token" value="{session.get('csrf_token', '')}">
-            <button type="submit" class="btn btn-sm btn-outline-success">Set as Default</button>
+            <button type="submit" class="btn btn-outline" style="padding: 4px 8px; font-size: 12px; color: var(--success); border-color: var(--success);">Set as Default</button>
         </form>
         '''
         cards += f"""
         <div class="card mb-3 shadow-sm">
-            <div class="card-body">
-                <h5 class="card-title fw-bold">{a['label']}{default_badge}</h5>
-                <p class="card-text mb-1">{a['line1']}</p>
-                <p class="card-text text-muted small">{a['city']} - {a['pincode']}</p>
-                <div class="d-flex gap-2 mt-2">
-                    <a href="/address/{a['id']}/edit" class="btn btn-sm btn-outline-primary">Edit</a>
-                    <a href="/address/{a['id']}/delete" class="btn btn-sm btn-outline-danger">Delete</a>
+            <div style="padding: 12px;">
+                <h5 style="font-weight: bold; margin: 0 0 6px 0;">{a['label']}{default_badge}</h5>
+                <p style="margin: 0 0 4px 0;">{a['line1']}</p>
+                <p class="text-muted" style="margin: 0 0 10px 0; font-size: 13px;">{a['city']} - {a['pincode']}</p>
+                <div style="display: flex; gap: 8px;">
+                    <a href="/address/{a['id']}/edit" class="btn btn-outline" style="padding: 4px 8px; font-size: 12px;">Edit</a>
+                    <a href="/address/{a['id']}/delete" class="btn btn-outline" style="padding: 4px 8px; font-size: 12px; color: var(--danger); border-color: var(--danger);">Delete</a>
                     {default_btn}
                 </div>
             </div>
@@ -623,18 +771,18 @@ def list_addresses():
     return render_template_string("""
     <!DOCTYPE html>
     <html>
-    <head><title>Address Book - PageTurner</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-    <body class="bg-light p-4">
-    <div class="container bg-white p-4 rounded shadow-sm" style="max-width: 700px;">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h3 class="fw-bold m-0">📍 Shipping Address Book</h3>
-            <a href="/address/add" class="btn btn-primary btn-sm fw-bold">+ Add New Address</a>
+    <head><title>Address Book - PageTurner</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light" style="padding: 24px;">
+    <div class="container card" style="max-width: 700px; padding: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h3 style="font-weight: bold; margin: 0;">📍 Shipping Address Book</h3>
+            <a href="/address/add" class="btn btn-primary" style="font-size: 13px;">+ Add New Address</a>
         </div>
         {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}{% for cat, msg in messages %}<div class="alert alert-{{cat}} p-2 small">{{msg}}</div>{% endfor %}{% endif %}
+          {% if messages %}{% for cat, msg in messages %}<div class="alert alert-{{cat}}">{{msg}}</div>{% endfor %}{% endif %}
         {% endwith %}
-        """ + (cards or "<p class='text-muted text-center py-4'>No addresses saved yet.</p>") + """
-        <a href="/" class="btn btn-outline-dark w-100 mt-3">Back to Storefront</a>
+        """ + (cards or "<p class='text-muted text-center' style='padding: 20px 0;'>No addresses saved yet.</p>") + """
+        <a href="/" class="btn btn-outline w-100" style="margin-top: 15px; text-align: center;">Back to Storefront</a>
     </div>
     </body>
     </html>
@@ -675,19 +823,19 @@ def add_address():
     return render_template_string("""
     <!DOCTYPE html>
     <html>
-    <head><title>Add Address - PageTurner</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-    <body class="bg-light p-4">
-    <div class="container bg-white p-4 rounded shadow-sm" style="max-width: 500px;">
-        <h4 class="fw-bold mb-3">Add New Address</h4>
+    <head><title>Add Address - PageTurner</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light" style="padding: 24px;">
+    <div class="container card" style="max-width: 500px; padding: 24px;">
+        <h4 style="font-weight: bold; margin-bottom: 16px;">Add New Address</h4>
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-            <div class="mb-2"><label>Address Label (e.g. Home, Office)</label><input type="text" name="label" class="form-control" required></div>
-            <div class="mb-2"><label>Address Line 1</label><input type="text" name="line1" class="form-control" required></div>
-            <div class="mb-2"><label>City</label><input type="text" name="city" class="form-control" required></div>
-            <div class="mb-3"><label>Pincode</label><input type="text" name="pincode" class="form-control" required></div>
-            <div class="form-check mb-3"><input type="checkbox" name="is_default" class="form-check-input" id="def"><label class="form-check-label" for="def">Set as Default Address</label></div>
-            <button type="submit" class="btn btn-success w-100 fw-bold">Save Address</button>
-            <a href="/addresses" class="btn btn-link text-muted w-100 text-center mt-2">Cancel</a>
+            <div class="form-group"><label class="form-label">Address Label (e.g. Home, Office)</label><input type="text" name="label" class="form-control" required></div>
+            <div class="form-group"><label class="form-label">Address Line 1</label><input type="text" name="line1" class="form-control" required></div>
+            <div class="form-group"><label class="form-label">City</label><input type="text" name="city" class="form-control" required></div>
+            <div class="form-group"><label class="form-label">Pincode</label><input type="text" name="pincode" class="form-control" required></div>
+            <div style="margin-bottom: 16px;"><input type="checkbox" name="is_default" id="def"> <label for="def" style="font-size: 14px;">Set as Default Address</label></div>
+            <button type="submit" class="btn btn-success w-100 fw-bold" style="margin-bottom: 8px;">Save Address</button>
+            <a href="/addresses" style="display: block; text-align: center; color: var(--text-muted); font-size: 13px; text-decoration: none;">Cancel</a>
         </form>
     </div>
     </body>
@@ -720,10 +868,10 @@ def edit_address(address_id):
             cursor.execute("BEGIN TRANSACTION")
             if is_default:
                 cursor.execute("UPDATE addresses SET is_default = 0 WHERE user_id = ?", (user_id,))
-            cursor.execute("UPDATE addresses SET label=?, line1=?, city=?, pincode=?, is_default=? WHERE id=? AND user_id=?",
+            cursor.execute("UPDATE addresses SET label = ?, line1 = ?, city = ?, pincode = ?, is_default = ? WHERE id = ? AND user_id = ?",
                            (label, line1, city, pincode, is_default, address_id, user_id))
             conn.commit()
-            flash("Address updated!", "success")
+            flash("Address updated successfully!", "success")
             return redirect(url_for('list_addresses'))
         except Exception as e:
             conn.rollback()
@@ -735,19 +883,19 @@ def edit_address(address_id):
     return render_template_string("""
     <!DOCTYPE html>
     <html>
-    <head><title>Edit Address - PageTurner</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-    <body class="bg-light p-4">
-    <div class="container bg-white p-4 rounded shadow-sm" style="max-width: 500px;">
-        <h4 class="fw-bold mb-3">Edit Address</h4>
+    <head><title>Edit Address - PageTurner</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light" style="padding: 24px;">
+    <div class="container card" style="max-width: 500px; padding: 24px;">
+        <h4 style="font-weight: bold; margin-bottom: 16px;">Edit Address</h4>
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-            <div class="mb-2"><label>Address Label</label><input type="text" name="label" value=" """ + addr['label'] + """ " class="form-control" required></div>
-            <div class="mb-2"><label>Address Line 1</label><input type="text" name="line1" value=" """ + addr['line1'] + """ " class="form-control" required></div>
-            <div class="mb-2"><label>City</label><input type="text" name="city" value=" """ + addr['city'] + """ " class="form-control" required></div>
-            <div class="mb-3"><label>Pincode</label><input type="text" name="pincode" value=" """ + addr['pincode'] + """ " class="form-control" required></div>
-            <div class="form-check mb-3"><input type="checkbox" name="is_default" class="form-check-input" id="def" """ + ('checked' if addr['is_default'] else '') + """><label class="form-check-label" for="def">Set as Default Address</label></div>
-            <button type="submit" class="btn btn-primary w-100 fw-bold">Update Address</button>
-            <a href="/addresses" class="btn btn-link text-muted w-100 text-center mt-2">Cancel</a>
+            <div class="form-group"><label class="form-label">Address Label</label><input type="text" name="label" value=""" + f'"{addr["label"]}"' + """ class="form-control" required></div>
+            <div class="form-group"><label class="form-label">Address Line 1</label><input type="text" name="line1" value=""" + f'"{addr["line1"]}"' + """ class="form-control" required></div>
+            <div class="form-group"><label class="form-label">City</label><input type="text" name="city" value=""" + f'"{addr["city"]}"' + """ class="form-control" required></div>
+            <div class="form-group"><label class="form-label">Pincode</label><input type="text" name="pincode" value=""" + f'"{addr["pincode"]}"' + """ class="form-control" required></div>
+            <div style="margin-bottom: 16px;"><input type="checkbox" name="is_default" id="def" """ + ('checked' if addr['is_default'] else '') + """> <label for="def" style="font-size: 14px;">Set as Default Address</label></div>
+            <button type="submit" class="btn btn-primary w-100 fw-bold" style="margin-bottom: 8px;">Update Address</button>
+            <a href="/addresses" style="display: block; text-align: center; color: var(--text-muted); font-size: 13px; text-decoration: none;">Cancel</a>
         </form>
     </div>
     </body>
@@ -869,22 +1017,23 @@ def wishlist():
 
     items_html = ""
     for item in wishlist_items:
+        price_str = format_inr(item['price'])
         items_html += f"""
-        <div class="card mb-3 p-3 d-flex flex-row justify-content-between align-items-center">
-            <div class="d-flex align-items-center gap-3">
+        <div class="card" style="display: flex; flex-direction: row; justify-content: space-between; align-items: center; padding: 12px; margin-bottom: 12px;">
+            <div style="display: flex; align-items: center; gap: 16px;">
                 <img src="{item['image_url']}" style="height: 60px; object-fit: contain;">
                 <div>
-                    <h6 class="fw-bold mb-1">{item['title']}</h6>
+                    <h5 style="font-weight: bold; margin: 0 0 4px 0;">{item['title']}</h5>
                     <small class="text-muted">by {item['author']}</small>
-                    <div class="text-primary fw-bold mt-1">₹{item['price']:.2f}</div>
+                    <div style="color: var(--primary); font-weight: bold; margin-top: 4px;">{price_str}</div>
                 </div>
             </div>
-            <div class="d-flex gap-2">
-                <form method="POST" action="/cart/add/{item['id']}">
+            <div style="display: flex; gap: 8px;">
+                <form method="POST" action="/cart/add/{item['id']}" style="margin: 0;">
                     <input type="hidden" name="csrf_token" value="{session.get('csrf_token', '')}">
-                    <button type="submit" class="btn btn-sm btn-warning fw-bold">Move to Cart</button>
+                    <button type="submit" class="btn btn-warning" style="padding: 6px 12px; font-size: 13px;">Move to Cart</button>
                 </form>
-                <a href="/wishlist/remove/{item['wishlist_id']}" class="btn btn-sm btn-outline-danger">Remove</a>
+                <a href="/wishlist/remove/{item['wishlist_id']}" class="btn btn-outline" style="padding: 6px 12px; font-size: 13px; color: var(--danger); border-color: var(--danger);">Remove</a>
             </div>
         </div>
         """
@@ -892,15 +1041,15 @@ def wishlist():
     return render_template_string("""
     <!DOCTYPE html>
     <html>
-    <head><title>My Wishlist - PageTurner</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-    <body class="bg-light p-4">
-    <div class="container bg-white p-4 rounded shadow-sm" style="max-width: 700px;">
-        <h3 class="fw-bold mb-3">❤️ My Wishlist</h3>
+    <head><title>My Wishlist - PageTurner</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light" style="padding: 24px;">
+    <div class="container card" style="max-width: 700px; padding: 24px;">
+        <h3 style="font-weight: bold; margin-bottom: 20px;">❤️ My Wishlist</h3>
         {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}{% for cat, msg in messages %}<div class="alert alert-{{cat}} p-2 small">{{msg}}</div>{% endfor %}{% endif %}
+          {% if messages %}{% for cat, msg in messages %}<div class="alert alert-{{cat}}">{{msg}}</div>{% endfor %}{% endif %}
         {% endwith %}
-        """ + (items_html or "<p class='text-muted text-center py-4'>Your wishlist is empty.</p>") + """
-        <a href="/" class="btn btn-dark w-100 mt-3">Back to Storefront</a>
+        """ + (items_html or "<p class='text-muted text-center' style='padding: 20px 0;'>Your wishlist is empty.</p>") + """
+        <a href="/" class="btn btn-outline w-100" style="margin-top: 15px; text-align: center;">Back to Storefront</a>
     </div>
     </body>
     </html>
@@ -921,55 +1070,72 @@ def cart():
     cart_items = session.get('cart', {})
     conn = get_db_connection()
     cursor = conn.cursor()
-    books_in_cart, subtotal = [], 0.0
+    books_in_cart, subtotal = [], 0
     for book_id, qty in cart_items.items():
         cursor.execute("SELECT * FROM books WHERE id = ?", (int(book_id),))
         book = cursor.fetchone()
         if book:
             item_total = book['price'] * qty
             subtotal += item_total
-            books_in_cart.append({'title': book['title'], 'price': book['price'], 'quantity': qty, 'item_total': item_total, 'image_url': book['image_url']})
+            books_in_cart.append({
+                'title': book['title'], 
+                'price': book['price'], 
+                'quantity': qty, 
+                'item_total': item_total, 
+                'image_url': book['image_url']
+            })
     conn.close()
 
-    discount = 0.0
+    discount = 0
     applied_coupon = session.get('applied_coupon')
     if applied_coupon and books_in_cart:
         if applied_coupon['discount_type'] == 'percentage':
-            discount = subtotal * (applied_coupon['discount_value'] / 100.0)
+            discount = int(subtotal * applied_coupon['discount_value'] // 100)
         elif applied_coupon['discount_type'] == 'fixed':
-            discount = min(subtotal, applied_coupon['discount_value'])
+            discount = min(subtotal, int(applied_coupon['discount_value']))
 
-    final_total = max(0.0, subtotal - discount)
+    final_total = max(0, subtotal - discount)
     session['calculated_total'] = final_total
     session['applied_discount'] = discount
 
-    items_html = "".join([f"<li class='list-group-item d-flex justify-content-between align-items-center'><span>{i['title']} (x{i['quantity']})</span><span>₹{i['item_total']:.2f}</span></li>" for i in books_in_cart]) or "<li class='list-group-item text-center text-muted'>Cart is empty</li>"
+    items_html = ""
+    for i in books_in_cart:
+        price_str = format_inr(i['item_total'])
+        items_html += f"<li class='list-group-item' style='display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border-color);'><span>{i['title']} (x{i['quantity']})</span><span>{price_str}</span></li>"
     
+    if not items_html:
+        items_html = "<div class='text-muted text-center' style='padding: 15px 0;'>Cart is empty</div>"
+
     coupon_section = f"""
-    <form method="POST" action="/coupon/apply" class="input-group mb-3">
+    <form method="POST" action="/coupon/apply" style="display: flex; gap: 8px; margin-bottom: 16px;">
         <input type="hidden" name="csrf_token" value="{session.get('csrf_token', '')}">
-        <input type="text" name="coupon_code" class="form-control" placeholder="Promo Code (e.g. SAVE10)" required>
-        <button class="btn btn-outline-secondary" type="submit">Apply Coupon</button>
+        <input type="text" name="coupon_code" class="form-control" placeholder="Promo Code (e.g. SAVE10)" required style="flex: 1;">
+        <button class="btn btn-outline" type="submit">Apply Coupon</button>
     </form>
     """
+
+    subtotal_str = format_inr(subtotal)
+    discount_str = format_inr(discount)
+    final_total_str = format_inr(final_total)
+    disabled_cls = '' if books_in_cart else 'opacity: 0.6; pointer-events: none;'
 
     return render_template_string("""
     <!DOCTYPE html>
     <html>
-    <head><title>Cart - PageTurner</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-    <body class="bg-light p-4">
-    <div class="container bg-white p-4 rounded shadow-sm" style="max-width: 600px;">
-        <h3 class="fw-bold mb-3">Shopping Cart</h3>
+    <head><title>Cart - PageTurner</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light" style="padding: 24px;">
+    <div class="container card" style="max-width: 600px; padding: 24px;">
+        <h3 style="font-weight: bold; margin-bottom: 20px;">Shopping Cart</h3>
         {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}{% for cat, msg in messages %}<div class="alert alert-{{cat}} p-2 small">{{msg}}</div>{% endfor %}{% endif %}
+          {% if messages %}{% for cat, msg in messages %}<div class="alert alert-{{cat}}">{{msg}}</div>{% endfor %}{% endif %}
         {% endwith %}
-        <ul class="list-group mb-3">""" + items_html + """</ul>
+        <ul style="list-style: none; padding: 0; margin: 0 0 16px 0;">""" + items_html + """</ul>
         """ + coupon_section + f"""
-        <div class="d-flex justify-content-between text-muted small mb-1"><span>Subtotal:</span><span>₹{subtotal:.2f}</span></div>
-        <div class="d-flex justify-content-between text-muted small mb-2"><span>Discount:</span><span>-₹{discount:.2f}</span></div>
-        <div class="d-flex justify-content-between fw-bold fs-5 mb-3"><span>Total Payable:</span><span class="text-primary">₹{final_total:.2f}</span></div>
-        <a href="/checkout" class="btn btn-warning w-100 fw-bold {'disabled' if not books_in_cart else ''}">Proceed to Checkout</a>
-        <a href="/" class="btn btn-outline-dark w-100 mt-2">Back to Home Storefront</a>
+        <div style="display: flex; justify-content: space-between; color: var(--text-muted); font-size: 14px; margin-bottom: 4px;"><span>Subtotal:</span><span>{subtotal_str}</span></div>
+        <div style="display: flex; justify-content: space-between; color: var(--text-muted); font-size: 14px; margin-bottom: 12px;"><span>Discount:</span><span>-{discount_str}</span></div>
+        <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 18px; margin-bottom: 20px;"><span>Total Payable:</span><span style="color: var(--primary);">{final_total_str}</span></div>
+        <a href="/checkout" class="btn btn-warning w-100 fw-bold" style="text-align: center; {disabled_cls}">Proceed to Checkout</a>
+        <a href="/" class="btn btn-outline w-100" style="margin-top: 8px; text-align: center;">Back to Home Storefront</a>
     </div>
     </body>
     </html>
@@ -980,8 +1146,8 @@ def cart():
 def checkout():
     cart = session.get('cart', {})
     if not cart: return redirect(url_for('home'))
-    total = session.get('calculated_total', 0.0)
-    discount = session.get('applied_discount', 0.0)
+    total = session.get('calculated_total', 0)
+    discount = session.get('applied_discount', 0)
     user_id = session.get('user_id')
 
     conn = get_db_connection()
@@ -1005,6 +1171,12 @@ def checkout():
                     VALUES (?, ?, ?, ?, ?, ?, ?, 'Placed')
                 """, (user_id, request.form.get('name'), request.form.get('email'), request.form.get('phone'), request.form.get('address'), total, discount))
                 order_id = cursor.lastrowid
+
+                changed_by = session.get('user_name') or session.get('user_email') or 'Customer'
+                cursor.execute("""
+                    INSERT INTO order_status_history (order_id, status, changed_by, changed_at, note)
+                    VALUES (?, 'Placed', ?, DATETIME('now'), 'Order placed successfully')
+                """, (order_id, changed_by))
 
                 for book_id_str, qty in cart.items():
                     book_id = int(book_id_str)
@@ -1034,26 +1206,32 @@ def checkout():
 
     address_options = ""
     if saved_addresses:
-        address_options = "<label class='form-label fw-bold mt-2'>Or Pick a Saved Address:</label><select id='saved_addr' class='form-select mb-2' onchange='document.getElementById(\"addr_input\").value = this.value;'><option value=''>-- Select Saved Address --</option>"
+        address_options = "<label class='form-label' style='margin-top: 12px;'>Or Pick a Saved Address:</label><select id='saved_addr' class='form-control' style='margin-bottom: 12px;' onchange='document.getElementById(\"addr_input\").value = this.value;'><option value=''>-- Select Saved Address --</option>"
         for a in saved_addresses:
             full_str = f"{a['line1']}, {a['city']} - {a['pincode']}"
             is_def_lbl = " (Default)" if a['is_default'] else ""
             address_options += f"<option value='{full_str}'>{a['label']}{is_def_lbl}: {full_str}</option>"
         address_options += "</select>"
 
+    total_str = format_inr(total)
+    discount_str = format_inr(discount)
+
     return render_template_string("""
-    <!DOCTYPE html><html><head><title>Checkout</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-    <body class="bg-light p-4"><div class="container bg-white p-4 rounded shadow-sm" style="max-width: 600px;">
-    <h3 class="fw-bold mb-3">Checkout</h3>
+    <!DOCTYPE html>
+    <html>
+    <head><title>Checkout</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light" style="padding: 24px;">
+    <div class="container card" style="max-width: 600px; padding: 24px;">
+    <h3 style="font-weight: bold; margin-bottom: 20px;">Checkout</h3>
     <form method="POST">
     <input type="hidden" name="csrf_token" value=""" + f'"{session.get("csrf_token", "")}"' + """>
-    <div class="mb-2"><label>Full Name</label><input type="text" name="name" value=""" + f'"{name}"' + """ class="form-control" required></div>
-    <div class="mb-2"><label>Email</label><input type="email" name="email" value=""" + f'"{email}"' + """ class="form-control" required></div>
-    <div class="mb-2"><label>Phone</label><input type="tel" name="phone" class="form-control" required></div>
+    <div class="form-group"><label class="form-label">Full Name</label><input type="text" name="name" value=""" + f'"{name}"' + """ class="form-control" required></div>
+    <div class="form-group"><label class="form-label">Email</label><input type="email" name="email" value=""" + f'"{email}"' + """ class="form-control" required></div>
+    <div class="form-group"><label class="form-label">Phone</label><input type="tel" name="phone" class="form-control" required></div>
     """ + address_options + """
-    <div class="mb-3"><label class="form-label fw-bold mt-2">Delivery Address</label>
+    <div class="form-group"><label class="form-label" style="margin-top: 12px;">Delivery Address</label>
     <textarea id="addr_input" name="address" class="form-control" placeholder="Enter delivery address..." required>""" + default_address_str + """</textarea></div>
-    <h5 class="my-3 text-success fw-bold">Total Payable: ₹""" + f"{total:.2f}" + f" (Saved ₹{discount:.2f})" + """</h5>
+    <h5 style="margin: 20px 0; color: var(--success); font-weight: bold;">Total Payable: """ + total_str + f" (Saved {discount_str})" + """</h5>
     <button type="submit" class="btn btn-success w-100 fw-bold">Place Order</button>
     </form></div></body></html>
     """)
@@ -1068,26 +1246,132 @@ def orders():
 
     orders_html = ""
     for o in user_orders:
+        total_str = format_inr(o['total_amount'])
+        discount_str = format_inr(o['discount_amount'])
+        
         cancel_btn = f"""
-        <form method="POST" action="/order/cancel/{o['id']}" class="mt-2">
+        <form method="POST" action="/order/cancel/{o['id']}" style="margin-top: 8px;">
             <input type="hidden" name="csrf_token" value="{session.get('csrf_token', '')}">
-            <button type="submit" class="btn btn-sm btn-outline-danger w-100 fw-bold">Cancel & Refund Order</button>
+            <button type="submit" class="btn btn-outline w-100" style="color: var(--danger); border-color: var(--danger); font-size: 12px;">Cancel & Refund Order</button>
         </form>
         """ if o['status'] == 'Placed' else ""
 
         orders_html += f"""
-        <div class='card mb-3 p-3'>
-            <h5>Order #{o['id']}</h5>
-            <p class='mb-1'><b>Status:</b> <span class="badge bg-secondary">{o['status']}</span></p>
-            <p class='mb-1'><b>Shipping Address:</b> {o['customer_address'] or 'N/A'}</p>
-            <p class='mb-0'><b>Total:</b> ₹{o['total_amount']:.2f} (Discount applied: ₹{o['discount_amount'] or 0.0:.2f})</p>
+        <div class="card" style="padding: 16px; margin-bottom: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h5 style="margin: 0; font-weight: bold;">Order #{o['id']}</h5>
+                <span style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 12px;">{o['status']}</span>
+            </div>
+            <p style="margin: 4px 0;"><b>Shipping Address:</b> {o['customer_address'] or 'N/A'}</p>
+            <p style="margin: 4px 0 12px 0;"><b>Total:</b> {total_str} (Discount: {discount_str})</p>
+            <a href="/order/track/{o['id']}" class="btn btn-primary w-100" style="text-align: center; font-size: 13px; font-weight: 600; text-decoration: none; display: block; padding: 6px 0;">📦 Track Order</a>
             {cancel_btn}
         </div>
         """
 
     return render_template_string("""
-    <!DOCTYPE html><html><head><title>Orders</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-    <body class="bg-light p-4"><div class="container bg-white p-4 rounded" style="max-width: 600px;"><h3>My Orders</h3>""" + (orders_html or "<p>No orders.</p>") + """<a href="/" class="btn btn-dark w-100 mt-3">Back to Home</a></div></body></html>
+    <!DOCTYPE html>
+    <html>
+    <head><title>Orders</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light" style="padding: 24px;">
+    <div class="container card" style="max-width: 600px; padding: 24px;">
+        <h3 style="font-weight: bold; margin-bottom: 20px;">My Orders</h3>
+        """ + (orders_html or "<p class='text-muted'>No orders.</p>") + """
+        <a href="/" class="btn btn-outline w-100" style="margin-top: 15px; text-align: center;">Back to Home</a>
+    </div>
+    </body>
+    </html>
+    """)
+
+@app.route('/order/track/<int:order_id>')
+def track_order(order_id):
+    if not session.get('user_id') and not session.get('admin_logged_in'):
+        flash("Please log in to track orders.", "warning")
+        return redirect(url_for('login'))
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
+    order = cursor.fetchone()
+
+    if not order:
+        conn.close()
+        return "Order not found.", 404
+
+    user_role = session.get('user_role', 'customer')
+    if user_role != 'admin' and user_role != 'staff' and order['user_id'] != session.get('user_id'):
+        conn.close()
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head><title>403 Forbidden - PageTurner</title><link rel="stylesheet" href="/static/style.css"></head>
+        <body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
+            <div class="card p-5 text-center shadow-sm" style="max-width: 450px; margin: 100px auto;">
+                <h1 class="display-1 text-danger fw-bold" style="color: var(--danger);">403</h1>
+                <h4 class="fw-bold mb-3">Access Forbidden</h4>
+                <p class="text-muted">You do not have permission to view this order.</p>
+                <a href="/orders" class="btn btn-primary mt-3 fw-bold">Return to My Orders</a>
+            </div>
+        </body>
+        </html>
+        """, 403
+
+    cursor.execute("SELECT * FROM order_status_history WHERE order_id = ? ORDER BY id ASC", (order_id,))
+    history = cursor.fetchall()
+    conn.close()
+
+    current_status = order['status'] or 'Placed'
+    stages = ['Placed', 'Packed', 'Shipped', 'Delivered']
+    
+    if current_status == 'Cancelled':
+        timeline_html = '<div style="color: var(--danger); font-weight: bold; text-align: center; padding: 20px;">Order has been Cancelled</div>'
+    else:
+        current_idx = stages.index(current_status) if current_status in stages else 0
+        steps_html = ""
+        for idx, stage in enumerate(stages):
+            is_active = idx <= current_idx
+            bg_color = "var(--primary)" if is_active else "#e2e8f0"
+            text_color = "#fff" if is_active else "var(--text-dark)"
+            steps_html += f"""
+            <div style="display: flex; align-items: center; flex: 1; position: relative; text-align: center; flex-direction: column;">
+                <div style="width: 36px; height: 36px; border-radius: 50%; background: {bg_color}; color: {text_color}; display: flex; align-items: center; justify-content: center; font-weight: bold; margin-bottom: 8px; z-index: 2;">{idx + 1}</div>
+                <div style="font-size: 13px; font-weight: bold; color: {'var(--text-dark)' if is_active else 'var(--text-muted)'};">{stage}</div>
+            </div>
+            """
+        timeline_html = f"""
+        <div style="display: flex; justify-content: space-between; position: relative; margin: 30px 0;">
+            {steps_html}
+        </div>
+        """
+
+    history_rows = ""
+    for h in history:
+        history_rows += f"<tr><td>{h['status']}</td><td>{h['changed_by']}</td><td>{h['changed_at']}</td><td>{h['note'] or ''}</td></tr>"
+
+    history_table = f"""
+    <h5 style="font-weight: bold; margin-top: 24px;">Status History Log</h5>
+    <table class="table" style="font-size: 13px; margin-top: 8px;">
+        <thead><tr><th>Status</th><th>Changed By</th><th>Timestamp</th><th>Note</th></tr></thead>
+        <tbody>{history_rows or '<tr><td colspan="4" class="text-center text-muted">No history logged yet.</td></tr>'}</tbody>
+    </table>
+    """
+
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html>
+    <head><title>Track Order #""" + str(order_id) + """ - PageTurner</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light" style="padding: 24px;">
+    <div class="container card" style="max-width: 700px; padding: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h3 style="font-weight: bold; margin: 0;">📦 Order Tracking #""" + str(order_id) + """</h3>
+            <a href="/orders" class="btn btn-outline" style="font-size: 13px;">Back to Orders</a>
+        </div>
+        <p><b>Current Status:</b> <span style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 12px;">""" + current_status + """</span></p>
+        """ + timeline_html + """
+        """ + history_table + """
+    </div>
+    </body>
+    </html>
     """)
 
 @app.route('/order/cancel/<int:order_id>', methods=['POST'])
@@ -1111,6 +1395,12 @@ def cancel_order(order_id):
             cursor.execute("INSERT INTO stock_log (book_id, change, reason, user_id) VALUES (?, ?, 'cancelled_order', ?)", (item['book_id'], item['quantity'], session.get('user_id')))
             
         cursor.execute("UPDATE orders SET status = 'Cancelled' WHERE id = ?", (order_id,))
+        changed_by = session.get('user_name') or session.get('user_email') or 'Customer'
+        cursor.execute("""
+            INSERT INTO order_status_history (order_id, status, changed_by, changed_at, note)
+            VALUES (?, 'Cancelled', ?, DATETIME('now'), 'Order cancelled by customer')
+        """, (order_id, changed_by))
+
         conn.commit()
         flash(f"Order #{order_id} cancelled and refunded.", "success")
     except Exception as e:
@@ -1138,12 +1428,21 @@ def admin_login():
             
         flash("Invalid credentials.", "danger")
     return render_template_string("""
-    <!DOCTYPE html><html><head><title>Admin Login</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-    <body class="bg-dark d-flex align-items-center justify-content-center min-vh-100"><div class="card p-4 shadow" style="width: 350px;">
-    <h4 class="text-center mb-3 text-white">Admin / Staff Login</h4><form method="POST">
-    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-    <input type="text" name="username" class="form-control mb-2" placeholder="admin or staff" required>
-    <input type="password" name="password" class="form-control mb-3" placeholder="password" required><button type="submit" class="btn btn-warning w-100 fw-bold">Login</button></form></div></body></html>
+    <!DOCTYPE html>
+    <html>
+    <head><title>Admin Login</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body style="background: var(--text-dark); display: flex; align-items: center; justify-content: center; min-vh-100;">
+        <div class="card" style="width: 350px; padding: 24px; margin: 100px auto;">
+            <h4 style="text-align: center; margin-bottom: 16px; font-weight: bold;">Admin / Staff Login</h4>
+            <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+                <input type="text" name="username" class="form-control" placeholder="admin or staff" required style="margin-bottom: 10px;">
+                <input type="password" name="password" class="form-control" placeholder="password" required style="margin-bottom: 16px;">
+                <button type="submit" class="btn btn-warning w-100 fw-bold">Login</button>
+            </form>
+        </div>
+    </body>
+    </html>
     """)
 
 @app.route('/admin/dashboard')
@@ -1165,7 +1464,8 @@ def admin_coupons():
     if request.method == 'POST':
         code = request.form.get('code', '').strip().upper()
         dtype = request.form.get('discount_type', 'percentage')
-        dval = float(request.form.get('discount_value', 0.0))
+        dval_raw = float(request.form.get('discount_value', 0))
+        dval = int(dval_raw * 100) if dtype == 'fixed' else int(dval_raw)
         cursor.execute("INSERT INTO coupons (code, discount_type, discount_value, is_active) VALUES (?, ?, ?, 1)", (code, dtype, dval))
         conn.commit()
         flash("Coupon created successfully!", "success")
@@ -1174,17 +1474,24 @@ def admin_coupons():
     coupons = cursor.fetchall()
     conn.close()
 
-    rows = "".join([f"<tr><td>{c['id']}</td><td class='fw-bold'>{c['code']}</td><td>{c['discount_type']}</td><td>{c['discount_value']}</td><td><a href='/admin/coupon/delete/{c['id']}' class='btn btn-sm btn-outline-danger'>Delete</a></td></tr>" for c in coupons])
+    rows = ""
+    for c in coupons:
+        val_display = f"{c['discount_value']}%" if c['discount_type'] == 'percentage' else format_inr(c['discount_value'])
+        rows += f"<tr><td>{c['id']}</td><td style='font-weight: bold;'>{c['code']}</td><td>{c['discount_type']}</td><td>{val_display}</td><td><a href='/admin/coupon/delete/{c['id']}' class='btn btn-outline' style='padding: 2px 6px; font-size: 11px; color: var(--danger); border-color: var(--danger);'>Delete</a></td></tr>"
+
     return render_template_string("""
-    <!DOCTYPE html><html><head><title>Manage Coupons</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-    <body class="bg-light p-4"><div class="container bg-white p-4 rounded shadow-sm">
-    <div class="d-flex justify-content-between align-items-center mb-4"><h3 class="m-0">🏷️ Promo Codes Management</h3><a href="/admin/dashboard" class="btn btn-outline-dark btn-sm">Dashboard</a></div>
-    <form method="POST" class="row g-2 mb-4">
+    <!DOCTYPE html>
+    <html>
+    <head><title>Manage Coupons</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light" style="padding: 24px;">
+    <div class="container card" style="padding: 24px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;"><h3 style="margin: 0; font-weight: bold;">🏷️ Promo Codes Management</h3><a href="/admin/dashboard" class="btn btn-outline" style="font-size: 13px;">Dashboard</a></div>
+    <form method="POST" style="display: grid; grid-template-columns: repeat(4, 1fr) auto; gap: 8px; margin-bottom: 20px;">
     <input type="hidden" name="csrf_token" value=""" + f'"{session.get("csrf_token", "")}"' + """>
-    <div class="col-md-4"><input type="text" name="code" class="form-control" placeholder="Code (e.g., SUMMER20)" required></div>
-    <div class="col-md-3"><select name="discount_type" class="form-select"><option value="percentage">Percentage (%)</option><option value="fixed">Fixed (₹)</option></select></div>
-    <div class="col-md-3"><input type="number" step="0.01" name="discount_value" class="form-control" placeholder="Value" required></div>
-    <div class="col-md-2"><button type="submit" class="btn btn-success w-100">Add Code</button></div>
+    <input type="text" name="code" class="form-control" placeholder="Code (e.g., SUMMER20)" required>
+    <select name="discount_type" class="form-control"><option value="percentage">Percentage (%)</option><option value="fixed">Fixed</option></select>
+    <input type="number" step="0.01" name="discount_value" class="form-control" placeholder="Value (e.g. 10 or 100)" required>
+    <button type="submit" class="btn btn-success" style="font-weight: bold;">Add Code</button>
     </form>
     <table class="table"><thead><tr><th>ID</th><th>Code</th><th>Type</th><th>Value</th><th>Action</th></tr></thead><tbody>""" + rows + """</tbody></table>
     </div></body></html>
@@ -1211,7 +1518,9 @@ def export_orders():
     conn.close()
     csv_data = "Order ID,Customer Name,Email,Phone,Address,Total Amount,Discount,Status,Created At\n"
     for o in orders_list:
-        csv_data += f"{o['id']},{o['customer_name'] or 'Guest'},{o['customer_email'] or ''},{o['customer_phone'] or ''},\"{o['customer_address'] or ''}\",{o['total_amount']:.2f},{o['discount_amount'] or 0.0},{o['status']},{o['created_at']}\n"
+        total_inr = f"{o['total_amount'] / 100:.2f}"
+        discount_inr = f"{(o['discount_amount'] or 0) / 100:.2f}"
+        csv_data += f"{o['id']},{o['customer_name'] or 'Guest'},{o['customer_email'] or ''},{o['customer_phone'] or ''},\"{o['customer_address'] or ''}\",{total_inr},{discount_inr},{o['status']},{o['created_at']}\n"
     return csv_data, 200, {'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename=orders_report.csv'}
 
 @app.route('/admin/analytics')
@@ -1221,14 +1530,23 @@ def admin_analytics():
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*), SUM(total_amount), AVG(total_amount) FROM orders")
     row = cursor.fetchone()
-    total_orders, total_revenue, avg_order_value = row[0] or 0, row[1] or 0.0, row[2] or 0.0
+    total_orders, total_revenue_paise, avg_order_paise = row[0] or 0, row[1] or 0, row[2] or 0.0
     conn.close()
+    
+    rev_str = format_inr(total_revenue_paise)
+    aov_str = format_inr(int(avg_order_paise))
+
     return render_template_string("""
-    <!DOCTYPE html><html><head><title>Analytics</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-    <body class="bg-light p-4"><div class="container bg-white p-4 rounded"><h3>Sales Analytics</h3>
-    <div class="row text-center my-4"><div class="col-md-4"><h4>Revenue: ₹""" + f"{total_revenue:.2f}" + """</h4></div>
-    <div class="col-md-4"><h4>Orders: """ + str(total_orders) + """</h4></div><div class="col-md-4"><h4>AOV: ₹""" + f"{avg_order_value:.2f}" + """</h4></div></div>
-    <a href="/admin/dashboard" class="btn btn-dark">Back to Dashboard</a></div></body></html>
+    <!DOCTYPE html>
+    <html>
+    <head><title>Analytics</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light" style="padding: 24px;"><div class="container card" style="padding: 24px;"><h3 style="font-weight: bold;">Sales Analytics</h3>
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; margin: 30px 0;">
+        <div><h4 style="color: var(--primary); margin: 0;">Revenue: """ + rev_str + """</h4></div>
+        <div><h4 style="margin: 0;">Orders: """ + str(total_orders) + """</h4></div>
+        <div><h4 style="margin: 0;">AOV: """ + aov_str + """</h4></div>
+    </div>
+    <a href="/admin/dashboard" class="btn btn-outline" style="text-align: center; display: block;">Back to Dashboard</a></div></body></html>
     """)
 
 @app.route('/admin/inventory', methods=['GET', 'POST'])
@@ -1241,13 +1559,14 @@ def admin_inventory():
         if request.method == 'POST':
             title = request.form.get('title')
             author = request.form.get('author')
-            price = float(request.form.get('price', 0))
+            price_rupees = float(request.form.get('price', 0))
+            price_paise = int(price_rupees * 100)
             stock = int(request.form.get('stock', 10))
             category = request.form.get('category')
             image_url = request.form.get('image_url', 'https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=400')
             
             cursor.execute("INSERT INTO books (title, author, price, stock, category, image_url) VALUES (?, ?, ?, ?, ?, ?)",
-                           (title, author, price, stock, category, image_url))
+                           (title, author, price_paise, stock, category, image_url))
             book_id = cursor.lastrowid
             cursor.execute("INSERT INTO stock_log (book_id, change, reason, user_id) VALUES (?, ?, 'admin_edit', ?)", (book_id, stock, session.get('user_id')))
             conn.commit()
@@ -1258,35 +1577,37 @@ def admin_inventory():
     finally:
         conn.close()
     
-    books_rows = "".join([f"<tr><td>{b['id']}</td><td class='fw-bold'>{b['title']}</td><td>{b['author']}</td><td>₹{b['price']:.2f}</td><td>{b['stock']}</td><td><span class='badge bg-secondary'>{b['category']}</span></td></tr>" for b in books])
+    books_rows = ""
+    for b in books:
+        price_str = format_inr(b['price'])
+        books_rows += f"<tr><td>{b['id']}</td><td style='font-weight: bold;'>{b['title']}</td><td>{b['author']}</td><td>{price_str}</td><td>{b['stock']}</td><td><span style='background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 11px;'>{b['category']}</span></td></tr>"
     
     return render_template_string("""
     <!DOCTYPE html>
     <html>
-    <head><title>Inventory Control</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-    <body class="bg-light p-4">
-    <div class="container bg-white p-4 rounded shadow-sm">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h3 class="fw-bold m-0">📦 Inventory Control & Add Book</h3>
-            <a href="/admin/dashboard" class="btn btn-outline-dark btn-sm">Dashboard</a>
+    <head><title>Inventory Control</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light" style="padding: 24px;">
+    <div class="container card" style="padding: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h3 style="font-weight: bold; margin: 0;">📦 Inventory Control & Add Book</h3>
+            <a href="/admin/dashboard" class="btn btn-outline" style="font-size: 13px;">Dashboard</a>
         </div>
         
-        <!-- Add Book Form -->
-        <div class="card p-3 mb-4 bg-light border-0">
-            <h5 class="fw-bold mb-3">Add New Book</h5>
-            <form method="POST" class="row g-2">
+        <div class="card" style="background: var(--bg-light); border: 0; padding: 16px; margin-bottom: 20px;">
+            <h5 style="font-weight: bold; margin-top: 0;">Add New Book</h5>
+            <form method="POST" style="display: grid; grid-template-columns: repeat(5, 1fr) auto; gap: 8px;">
                 <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-                <div class="col-md-3"><input type="text" name="title" class="form-control form-control-sm" placeholder="Book Title" required></div>
-                <div class="col-md-2"><input type="text" name="author" class="form-control form-control-sm" placeholder="Author" required></div>
-                <div class="col-md-2"><input type="number" step="0.01" name="price" class="form-control form-control-sm" placeholder="Price (₹)" required></div>
-                <div class="col-md-1"><input type="number" name="stock" class="form-control form-control-sm" placeholder="Stock" required></div>
-                <div class="col-md-2"><input type="text" name="category" class="form-control form-control-sm" placeholder="Category" required></div>
-                <div class="col-md-2"><button type="submit" class="btn btn-success btn-sm w-100 fw-bold">Add Book</button></div>
+                <input type="text" name="title" class="form-control" placeholder="Book Title" required>
+                <input type="text" name="author" class="form-control" placeholder="Author" required>
+                <input type="number" step="0.01" name="price" class="form-control" placeholder="Price" required>
+                <input type="number" name="stock" class="form-control" placeholder="Stock" required>
+                <input type="text" name="category" class="form-control" placeholder="Category" required>
+                <button type="submit" class="btn btn-success" style="font-weight: bold;">Add Book</button>
             </form>
         </div>
 
-        <table class="table align-middle">
-            <thead class="table-dark">
+        <table class="table">
+            <thead>
                 <tr><th>ID</th><th>Title</th><th>Author</th><th>Price</th><th>Stock</th><th>Category</th></tr>
             </thead>
             <tbody>""" + books_rows + """</tbody>
@@ -1305,35 +1626,23 @@ def admin_reviews():
     reviews = cursor.fetchall()
     conn.close()
 
-    rows = "".join([f"<tr><td>{r['id']}</td><td class='fw-bold'>{r['name']}</td><td>{r['book_title']}</td><td><span class='badge bg-warning text-dark'>{r['rating']} ⭐</span></td><td>{r['comment']}</td><td><a href='/admin/review/delete/{r['id']}' class='btn btn-sm btn-outline-danger'>Delete</a></td></tr>" for r in reviews])
+    rows = "".join([f"<tr><td>{r['id']}</td><td style='font-weight: bold;'>{r['name']}</td><td>{r['book_title']}</td><td><span style='background: #fef08a; padding: 2px 6px; border-radius: 4px; font-size: 11px;'>{r['rating']} ⭐</span></td><td>{r['comment']}</td><td><a href='/admin/review/delete/{r['id']}' class='btn btn-outline' style='padding: 2px 6px; font-size: 11px; color: var(--danger); border-color: var(--danger);'>Delete</a></td></tr>" for r in reviews])
     
     return render_template_string("""
     <!DOCTYPE html>
     <html>
-    <head>
-        <title>Review Moderation - PageTurner Admin</title>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    </head>
-    <body class="bg-light p-4">
-        <div class="container bg-white p-4 rounded shadow-sm">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h3 class="fw-bold m-0">💬 Customer Review Moderation</h3>
-                <a href="/admin/dashboard" class="btn btn-outline-dark btn-sm">Return to Dashboard</a>
+    <head><title>Review Moderation</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light" style="padding: 24px;">
+        <div class="container card" style="padding: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3 style="font-weight: bold; margin: 0;">💬 Customer Review Moderation</h3>
+                <a href="/admin/dashboard" class="btn btn-outline" style="font-size: 13px;">Return to Dashboard</a>
             </div>
-            <table class="table table-hover align-middle">
-                <thead class="table-dark">
-                    <tr>
-                        <th>ID</th>
-                        <th>Reviewer</th>
-                        <th>Book Title</th>
-                        <th>Rating</th>
-                        <th>Comment</th>
-                        <th>Action</th>
-                    </tr>
+            <table class="table">
+                <thead>
+                    <tr><th>ID</th><th>Reviewer</th><th>Book Title</th><th>Rating</th><th>Comment</th><th>Action</th></tr>
                 </thead>
-                <tbody>
-                    """ + (rows or '<tr><td colspan="6" class="text-center text-muted py-4">No reviews submitted yet.</td></tr>') + """
-                </tbody>
+                <tbody>""" + (rows or '<tr><td colspan="6" class="text-center text-muted" style="padding: 20px;">No reviews submitted yet.</td></tr>') + """</tbody>
             </table>
         </div>
     </body>
@@ -1355,14 +1664,89 @@ def delete_review(review_id):
 @role_required('admin', 'staff')
 @csrf_required
 def update_order_status(order_id: int):
-    new_status = request.form.get('status', 'Placed')
+    new_status = request.form.get('status', '').strip()
+    if not new_status:
+        flash("Please select a valid status.", "danger")
+        return redirect(url_for('admin_dashboard'))
+
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE orders SET status = ? WHERE id = ?", (new_status, order_id))
-    conn.commit()
-    conn.close()
-    flash(f"Order #{order_id} status updated.", "success")
+    try:
+        cursor.execute("SELECT status FROM orders WHERE id = ?", (order_id,))
+        order = cursor.fetchone()
+        if not order:
+            flash("Order not found.", "danger")
+            return redirect(url_for('admin_dashboard'))
+        
+        current_status = order['status'] or 'Placed'
+        
+        cursor.execute("UPDATE orders SET status = ? WHERE id = ?", (new_status, order_id))
+        
+        changed_by = session.get('user_name') or session.get('user_email') or 'Admin'
+        cursor.execute("""
+            INSERT INTO order_status_history (order_id, status, changed_by, changed_at, note)
+            VALUES (?, ?, ?, DATETIME('now'), ?)
+        """, (order_id, new_status, changed_by, f"Status updated from {current_status} to {new_status}"))
+        
+        conn.commit()
+        flash(f"Order #{order_id} status updated to {new_status} successfully!", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error updating status: {str(e)}", "danger")
+    finally:
+        conn.close()
     return redirect(url_for('admin_dashboard'))
+
+@app.errorhandler(403)
+def forbidden_error(error):
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html>
+    <head><title>403 Forbidden</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
+        <div class="container card text-center" style="max-width: 450px; padding: 32px; margin: 100px auto;">
+            <h1 style="font-size: 72px; color: var(--danger); margin: 0;">403</h1>
+            <h3 style="font-weight: bold; margin: 10px 0;">Access Forbidden</h3>
+            <p class="text-muted">You do not have permission to access this resource.</p>
+            <a href="/" class="btn btn-primary w-100" style="margin-top: 16px;">Return to Home</a>
+        </div>
+    </body>
+    </html>
+    """), 403
+
+@app.errorhandler(404)
+def not_found_error(error):
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html>
+    <head><title>404 Not Found</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
+        <div class="container card text-center" style="max-width: 450px; padding: 32px; margin: 100px auto;">
+            <h1 style="font-size: 72px; color: var(--primary); margin: 0;">404</h1>
+            <h3 style="font-weight: bold; margin: 10px 0;">Page Not Found</h3>
+            <p class="text-muted">The page you are looking for does not exist or has been moved.</p>
+            <a href="/" class="btn btn-primary w-100" style="margin-top: 16px;">Return to Home</a>
+        </div>
+    </body>
+    </html>
+    """), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html>
+    <head><title>500 Server Error</title><link rel="stylesheet" href="/static/style.css"></head>
+    <body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
+        <div class="container card text-center" style="max-width: 450px; padding: 32px; margin: 100px auto;">
+            <h1 style="font-size: 72px; color: var(--warning); margin: 0;">500</h1>
+            <h3 style="font-weight: bold; margin: 10px 0;">Internal Server Error</h3>
+            <p class="text-muted">Something went wrong on our end. Please try again later.</p>
+            <a href="/" class="btn btn-primary w-100" style="margin-top: 16px;">Return to Home</a>
+        </div>
+    </body>
+    </html>
+    """), 500
 
 @app.route('/admin/logout')
 def admin_logout():
