@@ -15,10 +15,11 @@ ALLOWED_STATUS_TRANSITIONS = {
     'Processing': ['Shipped', 'Delivered', 'Cancelled'],
     'Packed': ['Shipped', 'Delivered', 'Cancelled'],
     'Shipped': ['Delivered', 'Cancelled'],
-    'Delivered': ['Refund Requested', 'Cancelled'],
+    'Delivered': ['Refund Requested', 'Cancelled', 'Returned'],
     'Refund Requested': ['Refunded', 'Cancelled'],
     'Refunded': [],
-    'Cancelled': []
+    'Cancelled': [],
+    'Returned': []
 }
 
 def get_db_connection():
@@ -188,27 +189,6 @@ def init_db():
 
     conn.commit()
     conn.close()
-
-def get_recommendations(book_id, limit=4):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    query = """
-        SELECT b.*, COUNT(o2.book_id) AS frequency
-        FROM order_items o1
-        JOIN order_items o2 ON o1.order_id = o2.order_id AND o1.book_id != o2.book_id
-        JOIN books b ON o2.book_id = b.id
-        WHERE o1.book_id = ?
-        GROUP BY o2.book_id
-        ORDER BY frequency DESC
-        LIMIT ?
-    """
-    try:
-        cursor.execute(query, (book_id, limit))
-        recs = cursor.fetchall()
-    except Exception:
-        recs = []
-    conn.close()
-    return recs
 
 @app.route('/')
 def home():
@@ -401,6 +381,10 @@ def book_detail(book_id):
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM books WHERE id = ?", (book_id,))
     book = cursor.fetchone()
+
+    # Fetch other books for "Customers Also Bought" recommendations
+    cursor.execute("SELECT * FROM books WHERE id != ? LIMIT 4", (book_id,))
+    recommended_books = cursor.fetchall()
     conn.close()
 
     if not book:
@@ -412,6 +396,19 @@ def book_detail(book_id):
     wishlist_ids = session.get('wishlist', [])
     is_wishlisted = book['id'] in wishlist_ids
     heart_text = "❤️ Remove from Wishlist" if is_wishlisted else "🤍 Add to Wishlist"
+
+    recommendations_html = ""
+    for r_book in recommended_books:
+        r_price = format_inr(r_book['price'])
+        recommendations_html += f"""
+        <div style="background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.02);">
+            <img src="{r_book['image_url']}" style="height: 130px; object-fit: contain; margin-bottom: 8px; border-radius: 4px;">
+            <div style="font-size: 13px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px;">{r_book['title']}</div>
+            <div style="color: #f59e0b; font-size: 11px; margin-bottom: 4px;">★ {r_book['rating']}</div>
+            <div style="color: #ff5e62; font-weight: 800; font-size: 14px; margin-bottom: 8px;">₹{r_price}</div>
+            <a href="/book/{r_book['id']}" style="display: block; background: #2563eb; color: white; padding: 6px; font-size: 12px; text-decoration: none; border-radius: 4px; font-weight: bold;">View Book</a>
+        </div>
+        """
 
     return render_template_string("""
     <!DOCTYPE html>
@@ -436,12 +433,21 @@ def book_detail(book_id):
                 <a href="/wishlist/toggle/{{ book.id }}" style="display:block; text-align:center; font-size: 13px; width: 100%; color: #ef4444; border:1px solid #ef4444; padding:8px; box-sizing:border-box; border-radius:4px; text-decoration:none; font-weight:bold;">{{ heart_text }}</a>
             </div>
         </div>
+
+        <!-- Customers Also Bought Recommendation Section -->
+        <div style="margin-top: 35px; border-top: 1px solid #e2e8f0; padding-top: 24px;">
+            <h4 style="font-size: 18px; font-weight: 800; color: #0f172a; margin-bottom: 16px;">🔥 Customers Also Bought</h4>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;">
+                {{ recommendations_html | safe }}
+            </div>
+        </div>
+
         <hr style="margin: 24px 0; border: 0; border-top: 1px solid #e2e8f0;">
         <a href="/" style="color:#2563eb; text-decoration:none; font-weight:bold;">← Return to Catalog</a>
     </div>
     </body>
     </html>
-    """, book=book, csrf_tok=csrf_tok, price_str=price_str, heart_text=heart_text)
+    """, book=book, csrf_tok=csrf_tok, price_str=price_str, heart_text=heart_text, recommendations_html=recommendations_html)
 
 @app.route('/wishlist/toggle/<int:book_id>')
 def toggle_wishlist(book_id):
@@ -610,24 +616,46 @@ def orders():
     orders_html = ""
     for o in user_orders:
         total_str = format_inr(o['total_amount'])
-        status = o['status']
-        
-        action_buttons = f'<a href="/order/track/{o["id"]}" style="background: #181920; color: white; padding: 6px 12px; font-size: 12px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Track Order</a>'
-        
-        if status in ['Placed', 'Packed', 'Processing']:
-            action_buttons += f' <a href="/order/cancel/{o["id"]}" style="background: #ef4444; color: white; padding: 6px 12px; font-size: 12px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Cancel</a>'
+        status = o['status'] or 'Placed'
+        discount_val = o['discount_amount'] or 0
+
+        if status == 'Cancelled':
+            badge_style = "background: #fee2e2; color: #991b1b;"
         elif status == 'Delivered':
-            action_buttons += f' <a href="/order/refund/{o["id"]}" style="background: #d97706; color: white; padding: 6px 12px; font-size: 12px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Request Refund</a>'
+            badge_style = "background: #d1fae5; color: #065f46;"
+        else:
+            badge_style = "background: #e0f2fe; color: #0369a1;"
+
+        action_buttons = f'<a href="/order/track/{o["id"]}" style="background: #800000; color: white; padding: 10px 18px; border-radius: 8px; font-size: 13px; text-decoration: none; font-weight: 700; display: inline-flex; align-items: center; gap: 6px;">📦 Track Order</a>'
+        
+        if status == 'Delivered':
+            action_buttons += f' <a href="/order/refund/{o["id"]}" style="background: #fef08a; color: #854d0e; padding: 10px 18px; border-radius: 8px; font-size: 13px; text-decoration: none; font-weight: 700; display: inline-block;">Refund Details</a>'
+        elif status in ['Placed', 'Packed', 'Processing']:
+            action_buttons += f' <a href="/order/cancel/{o["id"]}" style="background: #ef4444; color: white; padding: 10px 18px; border-radius: 8px; font-size: 13px; text-decoration: none; font-weight: 700; display: inline-block;">Cancel Order</a>'
+        else:
+            action_buttons += f' <a href="/order/refund/{o["id"]}" style="background: #fef08a; color: #854d0e; padding: 10px 18px; border-radius: 8px; font-size: 13px; text-decoration: none; font-weight: 700; display: inline-block;">Refund Details</a>'
 
         orders_html += f"""
-        <div style="background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <h4 style="margin: 0 0 6px 0;">Order #{o['id']} <span style="font-size: 12px; background: #e0f2fe; color: #0284c7; padding: 2px 8px; border-radius: 4px; font-weight:bold;">{status}</span></h4>
-                <p style="margin: 0; color: #64748b; font-size: 13px;">Address: {o['customer_address']}</p>
+        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 24px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.02);">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+                <div>
+                    <h3 style="margin: 0 0 6px 0; font-size: 20px; font-weight: 800; color: #0f172a;">Order #{o['id']}</h3>
+                    <span style="padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 700; display: inline-block; {badge_style}">{status}</span>
+                </div>
+                <div style="text-align: right;">
+                    <div style="font-size: 22px; font-weight: 800; color: #ff5e62;">Rs. {total_str}</div>
+                    <div style="font-size: 12px; color: #64748b;">Discount: Rs. {discount_val}</div>
+                </div>
             </div>
-            <div style="text-align: right;">
-                <div style="font-size: 18px; font-weight: 800; color: #2563eb; margin-bottom:6px;">₹{total_str}</div>
-                <div>{action_buttons}</div>
+
+            <hr style="border: 0; border-top: 1px solid #f1f5f9; margin: 16px 0;">
+
+            <div style="font-size: 13px; color: #334155; margin-bottom: 20px;">
+                <b>Shipping Address:</b> {o['customer_address'] or 'N/A'}
+            </div>
+
+            <div style="display: flex; gap: 12px; align-items: center;">
+                {action_buttons}
             </div>
         </div>
         """
@@ -636,14 +664,14 @@ def orders():
     <!DOCTYPE html>
     <html>
     <head><title>My Orders</title></head>
-    <body style="font-family: sans-serif; padding: 40px; background: #f8fafc;">
-        <div style="max-width: 800px; margin: auto;">
-            <h2>📦 My Orders</h2>
+    <body style="font-family: 'Segoe UI', sans-serif; padding: 40px; background: #f8fafc;">
+        <div style="max-width: 850px; margin: auto;">
+            <h2 style="font-size: 26px; font-weight: 800; color: #0f172a; margin-bottom: 20px;">📦 My Orders</h2>
             {% with messages = get_flashed_messages(with_categories=true) %}
-              {% if messages %}{% for cat, msg in messages %}<div style="padding: 10px; background: #d1fae5; color: #065f46; border-radius: 6px; margin-bottom: 15px;">{{ msg }}</div>{% endfor %}{% endif %}
+              {% if messages %}{% for cat, msg in messages %}<div style="padding: 12px; background: #d1fae5; color: #065f46; border-radius: 8px; margin-bottom: 20px; font-weight:600;">{{ msg }}</div>{% endfor %}{% endif %}
             {% endwith %}
             {{ orders_html | safe if orders_html else "<p style='color:#64748b;'>No orders placed yet.</p>" }}
-            <a href="/" style="text-decoration: none; color: #1e293b; font-weight: bold; display: inline-block; margin-top: 15px;">← Back to Storefront</a>
+            <a href="/" style="text-decoration: none; color: #2563eb; font-weight: bold; display: inline-block; margin-top: 15px;">← Back to Storefront</a>
         </div>
     </body>
     </html>
@@ -688,28 +716,56 @@ def track_order(order_id):
     conn.close()
     if not order:
         return redirect(url_for('orders'))
+    
+    current_status = order['status']
+    steps = ['Placed', 'Processing', 'Packed', 'Shipped', 'Delivered']
+    
+    status_indices = {'Placed': 0, 'Processing': 1, 'Packed': 2, 'Shipped': 3, 'Delivered': 4, 'Refund Requested': 4, 'Refunded': 4, 'Cancelled': -1}
+    current_idx = status_indices.get(current_status, 0)
+
+    steps_html = ""
+    for idx, step in enumerate(steps):
+        is_completed = idx <= current_idx and current_idx != -1
+        bg_color = "#2563eb" if is_completed else "#cbd5e1"
+        text_color = "#0f172a" if is_completed else "#94a3b8"
+        steps_html += f"""
+        <div style="display: flex; align-items: center; margin-bottom: 20px;">
+            <div style="width: 32px; height: 32px; border-radius: 50%; background: {bg_color}; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; margin-right: 14px;">{idx+1}</div>
+            <div>
+                <div style="font-weight: bold; color: {text_color}; font-size: 15px;">{step}</div>
+                <div style="font-size: 11px; color: #64748b;">Status milestone for order fulfillment</div>
+            </div>
+        </div>
+        """
+
+    if current_status == 'Cancelled':
+        steps_html = "<div style='color: #ef4444; font-weight: bold; font-size: 16px; padding: 20px 0;'>❌ This order has been cancelled.</div>"
+    elif current_status in ['Refund Requested', 'Refunded']:
+        steps_html += f"<div style='color: #d97706; font-weight: bold; margin-top: 15px;'>⚠️ Status Update: {current_status}</div>"
+
     return render_template_string("""
     <!DOCTYPE html>
     <html>
-    <head><title>Track Order #{{ order.id }}</title></head>
+    <head><title>Interactive Status Map - Order #{{ order.id }}</title></head>
     <body style="font-family: sans-serif; padding: 40px; background: #f8fafc;">
-        <div style="max-width: 400px; background: white; padding: 30px; border-radius: 10px; margin: auto; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-            <h3>📍 Track Order #{{ order.id }}</h3>
-            <p>Customer: <b>{{ order.customer_name }}</b></p>
-            <p>Current Status: <b style="color:#2563eb;">{{ order.status }}</b></p>
-            <p>Total Amount: <b>₹{{ order.total_amount | inr }}</b></p>
-            <a href="/orders" style="display: block; text-align: center; margin-top: 15px; text-decoration: none; color: #2563eb; font-weight: bold;">Back to Orders</a>
+        <div style="max-width: 500px; background: white; padding: 35px; border-radius: 12px; margin: auto; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+            <h3 style="margin-top: 0;">📍 Interactive Order Map</h3>
+            <p style="color: #64748b; font-size: 13px; margin-bottom: 24px;">Order ID: <b>#{{ order.id }}</b> | Customer: <b>{{ order.customer_name }}</b></p>
+            
+            <div style="border-left: 2px dashed #e2e8f0; margin-left: 15px; padding-left: 10px;">
+                {{ steps_html | safe }}
+            </div>
+
+            <a href="/orders" style="display: block; text-align: center; margin-top: 30px; text-decoration: none; color: white; background: #181920; padding: 10px; border-radius: 6px; font-weight: bold;">← Back to My Orders</a>
         </div>
     </body>
     </html>
-    """, order=order)
+    """, order=order, steps_html=steps_html)
 
 @app.route('/addresses', methods=['GET', 'POST'])
 def addresses():
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # Use user_id if logged in, or fallback for guest
     u_id = session.get('user_id', 1)
     
     if request.method == 'POST':
