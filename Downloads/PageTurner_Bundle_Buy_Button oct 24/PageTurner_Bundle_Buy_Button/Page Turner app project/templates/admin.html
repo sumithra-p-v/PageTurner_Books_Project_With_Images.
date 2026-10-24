@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Dashboard - PageTurner</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar Navigation -->
+            <div class="col-md-2 bg-dark min-vh-100 p-3 text-white">
+                <h4 class="fw-bold text-warning mb-4">PageTurner</h4>
+                <ul class="nav nav-pills flex-column mb-auto">
+                    <li class="nav-item mb-1">
+                        <a href="/admin/dashboard" class="nav-link active fw-bold">Dashboard</a>
+                    </li>
+                    <li class="nav-item mb-1">
+                        <a href="/admin/inventory" class="nav-link text-white fw-bold">📚 Inventory</a>
+                    </li>
+                    <li class="nav-item mb-1">
+                        <a href="/admin/coupons" class="nav-link text-white fw-bold">🏷️ Coupons</a>
+                    </li>
+                    <li class="nav-item mb-1">
+                        <a href="/admin/analytics" class="nav-link text-white fw-bold">📊 Analytics</a>
+                    </li>
+                    <li class="nav-item mb-1">
+                        <a href="/admin/reviews" class="nav-link text-white fw-bold">💬 Reviews</a>
+                    </li>
+                    {% if session.get('staff_role') == 'admin' %}
+                    <li class="nav-item mb-1">
+                        <a href="/admin/customers" class="nav-link text-white fw-bold">🔒 Customer Accounts</a>
+                    </li>
+                    {% endif %}
+                    <li class="nav-item">
+                        <a href="/" class="nav-link text-white">Storefront</a>
+                    </li>
+                </ul>
+                <hr>
+                <a href="/admin/logout" class="btn btn-outline-danger btn-sm w-100">Logout Admin</a>
+            </div>
+
+            <!-- Main Content Area -->
+            <div class="col-md-10 p-4">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div>
+                        <h2 class="fw-bold m-0">Interactive Order Management</h2>
+                        <small class="text-muted">Track customer orders, manage shipping status, and view sales insights.</small>
+                    </div>
+                    <div class="d-flex gap-2">
+                        {% if session.get('staff_role') == 'admin' %}<a href="/admin/customers" class="btn btn-outline-dark fw-bold">🔒 Customer Accounts</a>{% endif %}
+                        <a href="/admin/inventory" class="btn btn-warning fw-bold">📚 Inventory Control</a>
+                        <a href="/admin/analytics" class="btn btn-primary fw-bold">📊 Sales Analytics</a>
+                        <a href="/admin/export_orders" class="btn btn-success fw-bold">📥 Export Orders CSV</a>
+                    </div>
+                </div>
+
+                <!-- Flash Messages -->
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                  {% if messages %}
+                    {% for category, message in messages %}
+                      <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                      </div>
+                    {% endfor %}
+                  {% endif %}
+                {% endwith %}
+
+                <!-- Orders Table -->
+                <div class="card shadow-sm border-0">
+                    <div class="card-body p-0">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Order #</th>
+                                    <th>Customer Details</th>
+                                    <th>Address</th>
+                                    <th>Amount</th>
+                                    <th>Date & Time</th>
+                                    <th>Status</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for order in orders %}
+                                <tr>
+                                    <td class="fw-bold">#{{ order.id }}</td>
+                                    <td>
+                                        <div class="fw-bold">{{ order.customer_name or 'Guest' }}</div>
+                                        <small class="text-muted d-block">{{ order.customer_email or '' }}</small>
+                                        <small class="text-muted">{{ order.customer_phone or '' }}</small>
+                                    </td>
+                                    <td><small class="text-secondary">{{ order.customer_address or 'N/A' }}</small></td>
+                                    <td class="fw-bold text-primary">₹{{ "%.2f"|format(order.total_amount) }}</td>
+                                    <td><small class="text-muted">{{ order.created_at }}</small></td>
+                                    <td>
+                                        {% if order.status == 'Delivered' %}
+                                            <span class="badge bg-success">{{ order.status }}</span>
+                                        {% elif order.status == 'Shipped' %}
+                                            <span class="badge bg-info text-dark">{{ order.status }}</span>
+                                        {% elif order.status == 'Processing' %}
+                                            <span class="badge bg-warning text-dark">{{ order.status }}</span>
+                                        {% else %}
+                                            <span class="badge bg-primary">{{ order.status }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <form method="POST" action="/admin/order/update_status/{{ order.id }}" class="d-flex gap-1">
+                                            <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+                                            <select name="status" class="form-select form-select-sm">
+                                                <option value="Placed" {% if order.status == 'Placed' %}selected{% endif %}>Placed</option>
+                                                <option value="Processing" {% if order.status == 'Processing' %}selected{% endif %}>Processing</option>
+                                                <option value="Shipped" {% if order.status == 'Shipped' %}selected{% endif %}>Shipped</option>
+                                                <option value="Delivered" {% if order.status == 'Delivered' %}selected{% endif %}>Delivered</option>
+                                            </select>
+                                            <button type="submit" class="btn btn-primary btn-sm">✓</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="7" class="text-center py-4 text-muted">No orders found.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
